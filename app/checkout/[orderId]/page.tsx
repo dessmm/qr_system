@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { listenToOrder, listenToSettings, updateOrderStatus, Order, AppSettings, DEFAULT_SETTINGS } from '@/lib/data' // BUG-08: Added updateOrderStatus import
+import { listenToOrder, listenToSettings, updateOrderStatus, Order, AppSettings, DEFAULT_SETTINGS, clearTableAfterPayment } from '@/lib/data'
 
 export default function CheckoutPage() {
   const params = useParams()
@@ -66,6 +66,16 @@ export default function CheckoutPage() {
       await new Promise(r => setTimeout(r, 1500))
       // BUG-08: Mark order as in-progress so kitchen knows it's confirmed
       await updateOrderStatus(orderId, 'in-progress')
+      // Clear table after payment is completed
+      if (order?.tableNumber) {
+        // Find the table by table number and clear it
+        const { getTables } = await import('@/lib/data')
+        const tables = await getTables()
+        const table = tables.find(t => t.tableNumber === order.tableNumber)
+        if (table) {
+          await clearTableAfterPayment(table.id)
+        }
+      }
       // BUG-08: Redirect to confirmation page (not status)
       router.push(`/confirmation/${orderId}`)
     } catch {

@@ -3,12 +3,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { listenToMenu, listenToSettings, MenuItem, CATEGORIES, CartItem, addOrder, AppSettings, DEFAULT_SETTINGS } from '@/lib/data'
+import { listenToMenu, listenToSettings, MenuItem, CATEGORIES, CartItem, addOrder, AppSettings, DEFAULT_SETTINGS, linkOrderToTable, getTableByQrCode, createTable } from '@/lib/data'
 
 export default function MenuPage() {
   const params = useParams()
   const router = useRouter()
-  const tableNumber = Number(params.tableId) // BUG-14: No silent default
+  const tableQrCode = params.tableId as string // QR code from URL
+  const tableNumber = Number(tableQrCode)
 
   const [activeCategory, setActiveCategory] = useState<string>('Appetizers')
   const [cart, setCart] = useState<CartItem[]>([])
@@ -18,15 +19,38 @@ export default function MenuPage() {
   const [isPlacing, setIsPlacing] = useState(false)
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [lastOrderId, setLastOrderId] = useState<string | null>(null) // BUG-07
+  const [lastOrderId, setLastOrderId] = useState<string | null>(null)
+  const [tableId, setTableId] = useState<string | null>(null)
 
   useEffect(() => {
     const unsubMenu = listenToMenu(setMenuItems)
     const unsubSettings = listenToSettings(setSettings)
-    const stored = sessionStorage.getItem('lastOrderId') // BUG-07
+    const stored = sessionStorage.getItem('lastOrderId')
     if (stored) setLastOrderId(stored)
+    
+    // Auto-create table if it doesn't exist when QR is scanned
+    async function ensureTableExists() {
+      const table = await getTableByQrCode(tableQrCode)
+      if (!table) {
+        const newTableId = await createTable({
+          tableNumber: Number(tableQrCode) || 1,
+          name: `Table ${tableQrCode}`,
+          status: 'available',
+          qrCode: tableQrCode,
+          capacity: 4,
+          positionX: 0,
+          positionY: 0,
+          shape: 'square',
+        })
+        setTableId(newTableId)
+      } else {
+        setTableId(table.id)
+      }
+    }
+    ensureTableExists()
+    
     return () => { unsubMenu(); unsubSettings() }
-  }, [])
+  }, [tableQrCode])
 
   // BUG-14: Hard validation for invalid table numbers
   if (!tableNumber || tableNumber <= 0) {
@@ -67,8 +91,17 @@ export default function MenuPage() {
   const placeOrder = async () => {
     if (cart.length === 0) return
     setIsPlacing(true)
+    
+    // Create the order
     const orderId = await addOrder({ tableNumber, items: cart, status: 'new', specialInstructions, createdAt: Date.now(), updatedAt: Date.now(), total: cartTotal, orderType: 'dine-in' })
+    
     if (orderId) {
+      // Link order to table and update table status to occupied
+      const table = await getTableByQrCode(tableQrCode)
+      if (table) {
+        await linkOrderToTable(table.id, orderId)
+      }
+      
       sessionStorage.setItem('lastOrderId', orderId) // BUG-07
       setLastOrderId(orderId) // BUG-07
       setCart([]) // BUG-15: Clear cart

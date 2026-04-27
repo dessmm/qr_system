@@ -36,6 +36,112 @@ export const DEFAULT_SETTINGS: AppSettings = {
 const SETTINGS_COL = 'settings';
 const MENU_COL = 'menu';
 const ORDERS_COL = 'orders';
+const TABLES_COL = 'tables';
+
+// TABLE MANAGEMENT
+export type TableStatus = 'available' | 'occupied' | 'reserved'
+
+export interface Table {
+  id: string
+  tableNumber: number
+  name: string
+  status: TableStatus
+  qrCode: string
+  capacity: number
+  positionX: number
+  positionY: number
+  shape?: 'square' | 'round'
+  currentOrderId?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export async function getTables(): Promise<Table[]> {
+  try {
+    const q = query(collection(db, TABLES_COL), orderBy('tableNumber'));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table));
+  } catch (error) {
+    console.error("Error fetching tables:", error);
+    return [];
+  }
+}
+
+export async function createTable(table: Omit<Table, 'id' | 'createdAt' | 'updatedAt'>) {
+  try {
+    const docRef = await addDoc(collection(db, TABLES_COL), {
+      ...table,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    });
+    return docRef.id;
+  } catch (error) {
+    console.error("Error creating table:", error);
+    return null;
+  }
+}
+
+export async function updateTableStatus(tableId: string, status: TableStatus, orderId?: string) {
+  try {
+    await updateDoc(doc(db, TABLES_COL, tableId), {
+      status,
+      currentOrderId: orderId || null,
+      updatedAt: Date.now()
+    });
+  } catch (error) {
+    console.error("Error updating table status:", error);
+  }
+}
+
+export async function getTableByQrCode(qrCode: string): Promise<Table | null> {
+  try {
+    const q = query(collection(db, TABLES_COL));
+    const querySnapshot = await getDocs(q);
+    const table = querySnapshot.docs.find(doc => doc.data().qrCode === qrCode);
+    if (table) {
+      return { id: table.id, ...table.data() } as Table;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching table by QR code:", error);
+    return null;
+  }
+}
+
+export async function linkOrderToTable(tableId: string, orderId: string) {
+  try {
+    await updateDoc(doc(db, TABLES_COL, tableId), {
+      status: 'occupied',
+      currentOrderId: orderId,
+      updatedAt: Date.now()
+    });
+  } catch (error) {
+    console.error("Error linking order to table:", error);
+  }
+}
+
+export async function clearTableAfterPayment(tableId: string) {
+  try {
+    await updateDoc(doc(db, TABLES_COL, tableId), {
+      status: 'available',
+      currentOrderId: null,
+      updatedAt: Date.now()
+    });
+  } catch (error) {
+    console.error("Error clearing table after payment:", error);
+  }
+}
+
+export function listenToTables(callback: (tables: Table[]) => void) {
+  const q = query(collection(db, TABLES_COL), orderBy('tableNumber'));
+  return onSnapshot(q, 
+    (snapshot) => {
+      const tables = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table));
+      callback(tables);
+    },
+    (error) => console.error('[listenToTables] Firestore error:', error)
+  );
+}
 
 // SETTINGS
 export async function getSettings(): Promise<AppSettings> {
