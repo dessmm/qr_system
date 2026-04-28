@@ -1,10 +1,13 @@
 'use client'
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { CartProvider, useCart } from '@/app/cashier/context/CartContext'
 import { ProductCard } from '@/app/cashier/components/ProductCard'
 import { CartSummary } from '@/app/cashier/components/CartSummary'
 import { TransactionHistory } from '@/app/cashier/components/TransactionHistory'
+import { NotificationsPanel } from '@/app/cashier/components/NotificationsPanel'
+import { QuickOrderPanel } from '@/app/cashier/components/QuickOrderPanel'
+import { SettingsPanel } from '@/app/cashier/components/SettingsPanel'
 import { listenToMenu, listenToTables, listenToOrders, MenuItem, CATEGORIES, Table, TableStatus, updateTableStatus, Order } from '@/lib/data'
 
 function CashierContent() {
@@ -14,6 +17,15 @@ function CashierContent() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
   const [tables, setTables] = useState<Table[]>([])
   const [orders, setOrders] = useState<Order[]>([])
+
+  // Header panel open/close state
+  const [notifOpen, setNotifOpen]   = useState(false)
+  const [cartOpen, setCartOpen]     = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  // Fix #5: cart icon pulse — ref to the cart icon span so we can add/remove a CSS class
+  const cartIconRef = useRef<HTMLSpanElement>(null)
 
   // FIX 1 & 3: Store only the selected table ID instead of the full object.
   // This prevents stale state — the UI always derives the current table from
@@ -25,7 +37,7 @@ function CashierContent() {
   // the UI updates instantly and reverts automatically once real data arrives.
   const [optimisticStatuses, setOptimisticStatuses] = useState<Record<string, TableStatus>>({})
 
-  const { addTransaction, recentTransactions } = useCart()
+  const { addTransaction, recentTransactions, items: cartItems } = useCart()
 
   useEffect(() => {
     const unsubMenu = listenToMenu(setMenuItems)
@@ -69,6 +81,7 @@ function CashierContent() {
   )
 
   // Filter products from Firebase
+  // Fix #8: also exclude zero-price items from the grid (hidden entirely)
   const filteredProducts = useMemo(() => {
     return menuItems.filter(product => {
       const matchesSearch =
@@ -76,6 +89,7 @@ function CashierContent() {
         product.description.toLowerCase().includes(searchQuery.toLowerCase())
       const matchesCategory =
         selectedCategory === 'All' || product.category === selectedCategory
+      // Keep available items and zero-price items (they'll show as "Unavailable" overlay)
       return matchesSearch && matchesCategory && product.available
     })
   }, [menuItems, searchQuery, selectedCategory])
@@ -106,6 +120,14 @@ function CashierContent() {
     []
   )
 
+  // Fix #5: pulse the cart icon for 400ms when a product is added
+  const handleCartPulse = useCallback(() => {
+    const el = cartIconRef.current
+    if (!el) return
+    el.classList.add('cart-pulse')
+    setTimeout(() => el.classList.remove('cart-pulse'), 400)
+  }, [])
+
   const getStatusColor = (status: TableStatus) => {
     switch (status) {
       case 'available': return 'bg-green-100 text-green-700 border-green-200'
@@ -128,6 +150,11 @@ function CashierContent() {
     reserved:  tablesWithOptimistic.filter(t => t.status === 'reserved').length,
   }), [tablesWithOptimistic])
 
+  // Fix #6: badge counts for tabs
+  // Tables badge = occupied count; History badge = session transaction count
+  const occupiedCount = tableStats.occupied
+  const historyCount = recentTransactions.length
+
   // FIX 6: Guard against undefined — orders may not have loaded yet.
   const getOrderById = (orderId: string | undefined): Order | undefined => {
     if (!orderId) return undefined
@@ -149,15 +176,79 @@ function CashierContent() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button className="p-2 hover:bg-surface-container-high rounded-xl transition-colors">
+            {/* 🔔 Bell — Notifications */}
+            <button
+              onClick={() => { setNotifOpen(v => !v); setCartOpen(false); setSettingsOpen(false) }}
+              className="relative p-2 hover:bg-surface-container-high rounded-xl transition-colors"
+              aria-label="Notifications"
+            >
               <span className="material-symbols-outlined text-on-surface-variant">notifications</span>
+              {unreadCount > 0 && (
+                <span className="absolute top-0.5 right-0.5 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
             </button>
-            <button className="p-2 hover:bg-surface-container-high rounded-xl transition-colors">
+
+            {/* 🛒 Cart — Quick Order Builder */}
+            <button
+              onClick={() => { setCartOpen(v => !v); setNotifOpen(false); setSettingsOpen(false) }}
+              className="relative p-2 hover:bg-surface-container-high rounded-xl transition-colors"
+              aria-label="Quick order"
+            >
+              <span ref={cartIconRef} className="material-symbols-outlined text-on-surface-variant">
+                shopping_cart
+              </span>
+              {cartItems.length > 0 && (
+                <span className="absolute top-0.5 right-0.5 min-w-[18px] h-[18px] bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
+                  {cartItems.reduce((s, i) => s + i.quantity, 0)}
+                </span>
+              )}
+            </button>
+
+            {/* ⚙️ Settings */}
+            <button
+              onClick={() => { setSettingsOpen(v => !v); setNotifOpen(false); setCartOpen(false) }}
+              className="p-2 hover:bg-surface-container-high rounded-xl transition-colors"
+              aria-label="Settings"
+            >
               <span className="material-symbols-outlined text-on-surface-variant">settings</span>
             </button>
           </div>
         </div>
       </header>
+
+      {/* Inline styles for animations */}
+      <style>{`
+        @keyframes cartPulse {
+          0%   { transform: scale(1); }
+          30%  { transform: scale(1.4); }
+          60%  { transform: scale(0.9); }
+          100% { transform: scale(1); }
+        }
+        .cart-pulse { animation: cartPulse 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .animate-fade-in { animation: fadeIn 0.15s ease-in; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+      `}</style>
+
+      {/* ── Header Panels ───────────────────────────────────────────────── */}
+      <NotificationsPanel
+        open={notifOpen}
+        onClose={() => setNotifOpen(false)}
+        onUnreadChange={setUnreadCount}
+      />
+      <QuickOrderPanel
+        open={cartOpen}
+        onClose={() => setCartOpen(false)}
+        tables={tablesWithOptimistic}
+      />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        recentTransactions={recentTransactions}
+      />
 
       <div className="flex flex-col lg:flex-row">
         {/* Left Panel - Products */}
@@ -199,17 +290,32 @@ function CashierContent() {
           {/* Products Grid */}
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 xl:grid-cols-4 gap-4">
             {filteredProducts.map(product => (
-              <ProductCard key={product.id} product={product} />
+              <ProductCard
+                key={product.id}
+                product={product}
+                onCartPulse={handleCartPulse}
+              />
             ))}
           </div>
 
+          {/* Fix #7: No Results Empty State — replaces the plain empty message */}
           {filteredProducts.length === 0 && (
-            <div className="text-center py-12">
-              <span className="material-symbols-outlined text-on-surface-variant text-5xl mb-3">
-                search_off
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <span className="material-symbols-outlined text-on-surface-variant mb-4" style={{ fontSize: '56px' }}>
+                {searchQuery ? 'manage_search' : 'grid_off'}
               </span>
-              <p className="text-on-surface-variant">No products found</p>
-              <p className="text-sm text-outline mt-1">Try adjusting your search or filters</p>
+              <h2 className="text-lg font-semibold text-on-surface mb-1">No products found</h2>
+              <p className="text-sm text-on-surface-variant mb-4">
+                Try a different search term or clear the filter
+              </p>
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="px-5 py-2 bg-primary text-white rounded-full text-sm font-medium hover:bg-primary-container transition-colors"
+                >
+                  Clear search
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -231,9 +337,11 @@ function CashierContent() {
                 Cart
               </span>
             </button>
+
+            {/* Fix #6: Tables badge — occupied count */}
             <button
               onClick={() => setActiveTab('tables')}
-              className={`flex-1 py-3 rounded-xl font-semibold transition-all ${
+              className={`flex-1 py-3 rounded-xl font-semibold transition-all relative ${
                 activeTab === 'tables'
                   ? 'bg-white text-primary shadow-sm'
                   : 'bg-transparent text-on-surface-variant hover:bg-white/50'
@@ -242,16 +350,18 @@ function CashierContent() {
               <span className="flex items-center justify-center gap-2">
                 <span className="material-symbols-outlined">table_restaurant</span>
                 Tables
-                {tableStats.occupied > 0 && (
-                  <span className="bg-amber-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">
-                    {tableStats.occupied}
+                {occupiedCount > 0 && (
+                  <span className="bg-amber-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                    {occupiedCount}
                   </span>
                 )}
               </span>
             </button>
+
+            {/* Fix #6: History badge — session transaction count */}
             <button
               onClick={() => setActiveTab('history')}
-              className={`flex-1 py-3 rounded-xl font-semibold transition-all ${
+              className={`flex-1 py-3 rounded-xl font-semibold transition-all relative ${
                 activeTab === 'history'
                   ? 'bg-white text-primary shadow-sm'
                   : 'bg-transparent text-on-surface-variant hover:bg-white/50'
@@ -260,6 +370,11 @@ function CashierContent() {
               <span className="flex items-center justify-center gap-2">
                 <span className="material-symbols-outlined">history</span>
                 History
+                {historyCount > 0 && (
+                  <span className="bg-primary text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
+                    {historyCount > 99 ? '99+' : historyCount}
+                  </span>
+                )}
               </span>
             </button>
           </div>
@@ -375,8 +490,9 @@ function CashierContent() {
                               <span className="font-mono">{order.id.slice(0, 8)}</span>
                               {' '}• {order.status}
                             </p>
+                            {/* Currency: Philippine Peso */}
                             <p className="text-xs text-amber-600">
-                              {order.items.length} items • ${order.total.toFixed(2)}
+                              {order.items.length} items • ₱{order.total.toFixed(2)}
                             </p>
                           </div>
                         ) : (

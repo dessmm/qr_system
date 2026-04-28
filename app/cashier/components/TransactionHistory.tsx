@@ -32,7 +32,7 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
       {/* Header */}
       <div className="p-4 border-b border-surface-container-low">
         <h3 className="font-semibold text-on-surface mb-3">Recent Transactions</h3>
-        
+
         {/* Filter */}
         <div className="flex gap-2 overflow-x-auto pb-1">
           {(['all', 'cash', 'card', 'digital'] as const).map(method => (
@@ -67,7 +67,8 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
                 </p>
               </div>
               <div className="text-right">
-                <p className="font-bold text-primary">${transaction.total.toFixed(2)}</p>
+                {/* Currency: Philippine Peso */}
+                <p className="font-bold text-primary">₱{transaction.total.toFixed(2)}</p>
                 <p className="text-xs text-on-surface-variant capitalize">{transaction.paymentMethod}</p>
               </div>
             </div>
@@ -86,8 +87,14 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
 
       {/* Transaction Detail Modal */}
       {selectedTransaction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setSelectedTransaction(null)}>
-          <div className="bg-white rounded-2xl max-w-md w-full max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setSelectedTransaction(null)}
+        >
+          <div
+            className="bg-white rounded-2xl max-w-md w-full max-h-[80vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
             {/* Modal Header */}
             <div className="p-4 border-b border-surface-container-low flex items-center justify-between">
               <div>
@@ -107,7 +114,7 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
               {/* Timestamp & Payment */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-surface-container-low rounded-xl p-3">
-                  <p className="text-xs text-on-surface-variant mb-1">Date & Time</p>
+                  <p className="text-xs text-on-surface-variant mb-1">Date &amp; Time</p>
                   <p className="text-sm font-medium text-on-surface">
                     {selectedTransaction.timestamp.toLocaleString()}
                   </p>
@@ -126,11 +133,9 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
                 <div className="space-y-2">
                   {selectedTransaction.items.map((item, idx) => (
                     <div key={idx} className="flex justify-between text-sm">
-                      <span className="text-on-surface">
-                        {item.quantity}x {item.name}
-                      </span>
+                      <span className="text-on-surface">{item.quantity}x {item.name}</span>
                       <span className="text-on-surface font-medium">
-                        ${(item.price * item.quantity).toFixed(2)}
+                        ₱{(item.price * item.quantity).toFixed(2)}
                       </span>
                     </div>
                   ))}
@@ -141,15 +146,15 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
               <div className="border-t border-outline-variant pt-4 space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-on-surface-variant">Subtotal</span>
-                  <span className="text-on-surface">${selectedTransaction.subtotal.toFixed(2)}</span>
+                  <span className="text-on-surface">₱{selectedTransaction.subtotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-on-surface-variant">Tax</span>
-                  <span className="text-on-surface">${selectedTransaction.tax.toFixed(2)}</span>
+                  <span className="text-on-surface">₱{selectedTransaction.tax.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-lg font-bold pt-2 border-t border-outline-variant">
                   <span className="text-on-surface">Total</span>
-                  <span className="text-primary">${selectedTransaction.total.toFixed(2)}</span>
+                  <span className="text-primary">₱{selectedTransaction.total.toFixed(2)}</span>
                 </div>
               </div>
 
@@ -157,12 +162,12 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
               <div className="bg-surface-container-low rounded-xl p-3 space-y-1">
                 <div className="flex justify-between text-sm">
                   <span className="text-on-surface-variant">Amount Received</span>
-                  <span className="text-on-surface">${selectedTransaction.paymentReceived.toFixed(2)}</span>
+                  <span className="text-on-surface">₱{selectedTransaction.paymentReceived.toFixed(2)}</span>
                 </div>
                 {selectedTransaction.change > 0 && (
                   <div className="flex justify-between text-sm font-semibold">
                     <span className="text-on-surface">Change Given</span>
-                    <span className="text-primary">${selectedTransaction.change.toFixed(2)}</span>
+                    <span className="text-primary">₱{selectedTransaction.change.toFixed(2)}</span>
                   </div>
                 )}
               </div>
