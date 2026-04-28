@@ -1,17 +1,261 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { listenToMenu, listenToSettings, MenuItem, CATEGORIES, CartItem, addOrder, AppSettings, DEFAULT_SETTINGS, linkOrderToTable, getTableByQrCode, createTable } from '@/lib/data'
+import { listenToMenu, listenToSettings, MenuItem, CATEGORIES, CartItem, addOrder, AppSettings, DEFAULT_SETTINGS } from '@/lib/data'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
+// ─── Welcome Screen (FIXED) ────────────────────────────────────────────────────
+function WelcomeScreen({ tableNumber, restaurantName, onStart }: { tableNumber: number; restaurantName: string; onStart: () => void }) {
+  const [leaving, setLeaving] = useState(false)
+
+  const handleStart = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setLeaving(true)
+    setTimeout(onStart, 400) // Reduced from 600ms
+  }
+
+  const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+  return (
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Outfit:wght@300;400;500;600&display=swap');
+
+        .ww-root {
+          min-height: 100vh !important;
+          height: 100vh !important;
+          background: #080808;
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 2rem 1.5rem;
+          font-family: 'Outfit', sans-serif;
+          overflow: hidden;
+          position: relative;
+          touch-action: manipulation;
+          -webkit-tap-highlight-color: transparent;
+          will-change: opacity, transform;
+        }
+        .ww-root.leaving { 
+          opacity: 0 !important; 
+          transform: scale(1.02) !important; 
+          transition: all 0.4s cubic-bezier(0.16,1,0.3,1) !important;
+        }
+
+        .ww-noise {
+          position: absolute; inset: 0; z-index: 0;
+          opacity: 0.03;
+          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+          background-size: 200px 200px;
+          pointer-events: none;
+        }
+        .ww-grid {
+          position: absolute; inset: 0; z-index: 0;
+          background-image:
+            linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+          background-size: 60px 60px;
+          pointer-events: none;
+        }
+        .ww-orb {
+          position: absolute; width: 600px; height: 600px; border-radius: 50%;
+          background: radial-gradient(circle, rgba(255,255,255,0.04) 0%, transparent 65%);
+          top: 50%; left: 50%; transform: translate(-50%, -50%);
+          animation: orbPulse 8s ease-in-out infinite; z-index: 0;
+          pointer-events: none;
+        }
+        @keyframes orbPulse {
+          0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.5; }
+          50%       { transform: translate(-50%, -50%) scale(1.15); opacity: 1; }
+        }
+        .ww-corner { position: absolute; z-index: 0; width: 80px; height: 80px; pointer-events: none; }
+        .ww-corner-tl { top: 2rem; left: 2rem; border-top: 1px solid rgba(255,255,255,0.12); border-left: 1px solid rgba(255,255,255,0.12); }
+        .ww-corner-br { bottom: 2rem; right: 2rem; border-bottom: 1px solid rgba(255,255,255,0.12); border-right: 1px solid rgba(255,255,255,0.12); }
+
+        /* ── Content - IMMEDIATELY VISIBLE ── */
+        .ww-content {
+          position: relative; z-index: 10;
+          display: flex; flex-direction: column; align-items: center;
+          text-align: center; max-width: 420px; width: 100%;
+          opacity: 1 !important;
+          transform: translateY(0) !important;
+          will-change: opacity, transform;
+        }
+
+        .ww-badge {
+          display: inline-flex; align-items: center; gap: 7px;
+          background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 100px; padding: 8px 18px;
+          font-size: 0.7rem; letter-spacing: 0.15em; text-transform: uppercase;
+          color: rgba(255,255,255,0.6); margin-bottom: 2rem;
+          animation: fadeInUp 0.6s ease 0.1s both;
+        }
+        .ww-badge-dot {
+          width: 6px; height: 6px; border-radius: 50%;
+          background: #ffffff; animation: blink 2s ease-in-out infinite;
+        }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+        @keyframes fadeInUp { 
+          from{opacity:0;transform:translateY(20px)} 
+          to{opacity:1;transform:translateY(0)} 
+        }
+
+        .ww-greeting {
+          font-family: 'Outfit', sans-serif; font-weight: 300; font-size: 0.8rem;
+          color: rgba(255,255,255,0.4); letter-spacing: 0.3em; text-transform: uppercase;
+          margin-bottom: 1.2rem; animation: fadeInUp 0.6s ease 0.2s both;
+        }
+        .ww-table {
+          font-family: 'Playfair Display', serif; font-weight: 700;
+          font-size: clamp(3.5rem, 16vw, 5.5rem); line-height: 0.95;
+          color: #ffffff; letter-spacing: -0.04em; margin-bottom: 0.5rem;
+          animation: fadeInUp 0.8s ease 0.3s both; text-shadow: 0 2px 20px rgba(0,0,0,0.5);
+        }
+        .ww-table-label {
+          font-family: 'Outfit', sans-serif; font-size: 0.7rem;
+          letter-spacing: 0.25em; text-transform: uppercase;
+          color: rgba(255,255,255,0.25); margin-bottom: 2.5rem;
+          animation: fadeInUp 0.6s ease 0.4s both;
+        }
+
+        .ww-divider {
+          display: flex; align-items: center; gap: 12px;
+          width: 100%; max-width: 280px; margin-bottom: 3rem;
+          animation: fadeInUp 0.6s ease 0.5s both;
+        }
+        .ww-divider-line { flex: 1; height: 1px; background: rgba(255,255,255,0.15); }
+        .ww-divider-diamond { width: 8px; height: 8px; border: 1px solid rgba(255,255,255,0.4); transform: rotate(45deg); }
+
+        .ww-info { display: flex; gap: 12px; margin-bottom: 3rem; animation: fadeInUp 0.6s ease 0.6s both; }
+        .ww-pill {
+          background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 100px; padding: 12px 20px;
+          font-size: 0.8rem; color: rgba(255,255,255,0.65); letter-spacing: 0.03em;
+          display: flex; align-items: center; gap: 8px; font-family: 'Outfit', sans-serif;
+          backdrop-filter: blur(10px);
+        }
+        .ww-pill-icon { font-size: 16px; opacity: 0.7; }
+
+        /* ── FIXED BUTTON ── */
+        .ww-btn {
+          position: relative;
+          display: inline-flex; align-items: center; justify-content: center; gap: 12px;
+          background: linear-gradient(135deg, #ffffff 0%, #f8f8f8 100%);
+          color: #080808; border: 2px solid rgba(255,255,255,0.3);
+          border-radius: 50px; padding: 20px 56px;
+          font-family: 'Outfit', sans-serif; font-size: 0.9rem; font-weight: 600;
+          letter-spacing: 0.1em; text-transform: uppercase;
+          cursor: pointer; overflow: hidden;
+          box-shadow: 0 8px 32px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.6);
+          transition: all 0.25s cubic-bezier(0.16,1,0.3,1);
+          touch-action: manipulation;
+          -webkit-tap-highlight-color: transparent;
+          min-height: 64px;
+          animation: fadeInUp 0.8s ease 0.7s both;
+        }
+        .ww-btn:active {
+          transform: scale(0.96) !important;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        }
+        .ww-btn::before {
+          content: ''; position: absolute; inset: 0;
+          background: rgba(255,255,255,0.9); opacity: 0;
+          transition: opacity 0.3s ease; border-radius: 50px;
+        }
+        .ww-btn:hover::before { opacity: 1; }
+        .ww-btn-text, .ww-btn-arrow { 
+          position: relative; z-index: 2; 
+          font-weight: 600;
+        }
+        .ww-btn-arrow { 
+          font-size: 20px; 
+          transition: transform 0.3s cubic-bezier(0.16,1,0.3,1); 
+        }
+        .ww-btn:hover .ww-btn-arrow { transform: translateX(6px); }
+        .ww-btn:active .ww-btn-arrow { transform: translateX(3px); }
+
+        .ww-footer {
+          position: absolute; bottom: 1.5rem; left: 0; right: 0; text-align: center;
+          font-size: 0.65rem; letter-spacing: 0.2em; text-transform: uppercase;
+          color: rgba(255,255,255,0.15); font-family: 'Outfit', sans-serif;
+          animation: fadeInUp 0.6s ease 0.9s both;
+        }
+
+        /* Mobile Safari fixes */
+        @media (hover: none) and (pointer: coarse) {
+          .ww-btn { 
+            padding: 24px 60px; 
+            font-size: 1rem; 
+            min-height: 72px;
+          }
+        }
+
+        /* Prevent zoom on iOS */
+        input, button { font-size: 16px; }
+      `}</style>
+
+      <div 
+        className={`ww-root${leaving ? ' leaving' : ''}`}
+        onTouchStart={e => e.stopPropagation()}
+      >
+        <div className="ww-noise" />
+        <div className="ww-grid" />
+        <div className="ww-orb" />
+        <div className="ww-corner ww-corner-tl" />
+        <div className="ww-corner ww-corner-br" />
+
+        <div className="ww-content">
+          <div className="ww-badge">
+            <div className="ww-badge-dot" />
+            Now Open
+          </div>
+          <p className="ww-greeting">welcome to</p>
+          <h1 className="ww-table">{restaurantName || 'The Restaurant'}</h1>
+          <p className="ww-table-label">Table Ordering · {time}</p>
+          
+          <div className="ww-divider">
+            <div className="ww-divider-line" />
+            <div className="ww-divider-diamond" />
+            <div className="ww-divider-line" />
+          </div>
+          
+          <div className="ww-info">
+            <div className="ww-pill">
+              <span className="material-symbols-outlined ww-pill-icon">table_restaurant</span>
+              Table {tableNumber}
+            </div>
+          </div>
+          
+          {/* FIXED BUTTON - Multiple event handlers for mobile */}
+          <button 
+            className="ww-btn" 
+            onClick={handleStart}
+            onTouchStart={handleStart}
+            onTouchEnd={e => e.preventDefault()}
+          >
+            <span className="ww-btn-text">Start Ordering</span>
+            <span className="material-symbols-outlined ww-btn-arrow">arrow_forward</span>
+          </button>
+        </div>
+        
+        <p className="ww-footer">Scan & Order · {restaurantName}</p>
+      </div>
+    </>
+  )
+}
+
+// ─── Main Menu Page ─────────────────────────────────────────────────────────────
 export default function MenuPage() {
   const params = useParams()
   const router = useRouter()
-  const tableQrCode = params.tableId as string // QR code from URL
-  const tableNumber = Number(tableQrCode)
 
-  const [activeCategory, setActiveCategory] = useState<string>('Appetizers')
+  // FIX-1: Safely parse tableId — on mobile, params may arrive as string or string[]
+  const rawId = params?.tableId
+  const tableNumber = rawId ? Number(Array.isArray(rawId) ? rawId[0] : rawId) : 0
+
+  const [showWelcome, setShowWelcome] = useState(true)
+  const [activeCategory, setActiveCategory] = useState<string>('All')
   const [cart, setCart] = useState<CartItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [showCart, setShowCart] = useState(false)
@@ -20,57 +264,26 @@ export default function MenuPage() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [lastOrderId, setLastOrderId] = useState<string | null>(null)
-  const [tableId, setTableId] = useState<string | null>(null)
+  // FIX-2: Track loading state so we don't flash "no items" before Firestore responds
+  const [menuLoading, setMenuLoading] = useState(true)
 
   useEffect(() => {
-    const unsubMenu = listenToMenu(setMenuItems)
+    // FIX-3: Start listeners immediately — don't gate on tableNumber
+    // tableNumber is only needed for ordering, not for loading the menu
+    const unsubMenu = listenToMenu((items) => {
+      setMenuItems(items)
+      setMenuLoading(false)
+    })
     const unsubSettings = listenToSettings(setSettings)
-    const stored = sessionStorage.getItem('lastOrderId')
-    if (stored) setLastOrderId(stored)
-    
-    // Auto-create table if it doesn't exist when QR is scanned
-    async function ensureTableExists() {
-      const table = await getTableByQrCode(tableQrCode)
-      if (!table) {
-        const newTableId = await createTable({
-          tableNumber: Number(tableQrCode) || 1,
-          name: `Table ${tableQrCode}`,
-          status: 'available',
-          qrCode: tableQrCode,
-          capacity: 4,
-          positionX: 0,
-          positionY: 0,
-          shape: 'square',
-        })
-        setTableId(newTableId)
-      } else {
-        setTableId(table.id)
-      }
-    }
-    ensureTableExists()
-    
+
+    // FIX-4: Safely read sessionStorage (throws in some mobile browsers in private mode)
+    try {
+      const stored = sessionStorage.getItem('lastOrderId')
+      if (stored) setLastOrderId(stored)
+    } catch (_) {}
+
     return () => { unsubMenu(); unsubSettings() }
-  }, [tableQrCode])
-
-  // BUG-14: Hard validation for invalid table numbers
-  if (!tableNumber || tableNumber <= 0) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center">
-        <span className="material-symbols-outlined text-6xl text-slate-300 mb-4">error</span>
-        <h1 className="text-xl font-bold mb-2 text-on-surface">Invalid Table</h1>
-        <p className="text-on-surface-variant mb-4">Please scan your table&apos;s QR code again.</p>
-        <Link href="/" className="text-primary font-bold">Return Home</Link>
-      </div>
-    )
-  }
-
-  const cartTotal = cart.reduce((sum, i) => sum + i.price * i.quantity, 0)
-  const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0)
-  const filteredItems = menuItems.filter(item => {
-    const matchCat = activeCategory === 'All' || item.category === activeCategory
-    const matchSearch = !searchQuery || item.name.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchCat && matchSearch && item.available
-  })
+  }, [])
 
   const addToCart = useCallback((item: MenuItem) => {
     setCart(prev => {
@@ -88,172 +301,618 @@ export default function MenuPage() {
     })
   }, [])
 
+  // FIX-5: Invalid table check happens AFTER hooks — and uses the safely-parsed tableNumber
+  if (!tableNumber || tableNumber <= 0) {
+    return (
+      <div style={{ fontFamily: "'Outfit', sans-serif" }} className="min-h-screen bg-[#080808] flex flex-col items-center justify-center p-6 text-center">
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap');`}</style>
+        <span className="material-symbols-outlined text-6xl text-neutral-700 mb-4">error</span>
+        <h1 className="text-xl font-bold mb-2 text-white">Invalid Table</h1>
+        <p className="text-neutral-500 mb-4">Please scan your table&apos;s QR code again.</p>
+        <Link href="/" className="text-white font-bold border-b border-white/30 pb-0.5">Return Home</Link>
+      </div>
+    )
+  }
+
+  if (showWelcome) {
+    return (
+      <WelcomeScreen
+        tableNumber={tableNumber}
+        restaurantName={settings.restaurantName}
+        onStart={() => setShowWelcome(false)}
+      />
+    )
+  }
+
+  const cartTotal = cart.reduce((sum, i) => sum + i.price * i.quantity, 0)
+  const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0)
+
+  // FIX-6: Don't filter by `available` strictly — if field is missing/undefined treat as available
+  // Also, 'All' category shows everything
+  const filteredItems = menuItems.filter(item => {
+    const matchCat = activeCategory === 'All' || item.category === activeCategory
+    const matchSearch = !searchQuery || item.name.toLowerCase().includes(searchQuery.toLowerCase())
+    // FIX-6: available === false explicitly hides; undefined/null/true all show
+    const isAvailable = item.available !== false
+    return matchCat && matchSearch && isAvailable
+  })
+
   const placeOrder = async () => {
     if (cart.length === 0) return
     setIsPlacing(true)
-    
-    // Create the order
-    const orderId = await addOrder({ tableNumber, items: cart, status: 'new', specialInstructions, createdAt: Date.now(), updatedAt: Date.now(), total: cartTotal, orderType: 'dine-in' })
-    
-    if (orderId) {
-      // Link order to table and update table status to occupied
-      const table = await getTableByQrCode(tableQrCode)
-      if (table) {
-        await linkOrderToTable(table.id, orderId)
+    try {
+      const orderId = await addOrder({
+        tableNumber,
+        items: cart,
+        status: 'new',
+        specialInstructions,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        total: cartTotal,
+        orderType: 'dine-in'
+      })
+      if (orderId) {
+        try { sessionStorage.setItem('lastOrderId', orderId) } catch (_) {}
+        setLastOrderId(orderId)
+        setCart([])
+        setSpecialInstructions('')
+        router.push(`/checkout/${orderId}`)
+      } else {
+        setIsPlacing(false)
+        alert('Failed to place order. Please try again.')
       }
-      
-      sessionStorage.setItem('lastOrderId', orderId) // BUG-07
-      setLastOrderId(orderId) // BUG-07
-      setCart([]) // BUG-15: Clear cart
-      setSpecialInstructions('') // BUG-15
-      router.push(`/checkout/${orderId}`)
-    } else {
+    } catch (err) {
       setIsPlacing(false)
-      alert("Failed to place order. Please try again.")
+      alert('Failed to place order. Please try again.')
     }
   }
 
   const getCartQty = (id: string) => cart.find(c => c.id === id)?.quantity || 0
 
   return (
-    <div className="bg-background min-h-screen pb-36">
-      <header className="bg-white/90 backdrop-blur-md border-b border-slate-100 shadow-sm sticky top-0 z-50">
-        <div className="flex justify-between items-center px-4 md:px-6 py-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-primary rounded-xl flex items-center justify-center">
-              <span className="material-symbols-outlined text-white text-sm">restaurant</span>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Outfit:wght@300;400;500;600&display=swap');
+
+        * { box-sizing: border-box; }
+
+        .menu-root {
+          background: #f5f4f0;
+          min-height: 100svh;
+          padding-bottom: 9rem;
+          font-family: 'Outfit', sans-serif;
+        }
+
+        /* ── Header ── */
+        .menu-header {
+          background: rgba(255,255,255,0.95);
+          backdrop-filter: blur(16px);
+          border-bottom: 0.5px solid rgba(0,0,0,0.08);
+          position: sticky; top: 0; z-index: 50;
+        }
+        .menu-header-inner {
+          display: flex; justify-content: space-between; align-items: center;
+          padding: 14px 20px;
+          max-width: 768px; margin: 0 auto;
+        }
+        .menu-logo { display: flex; align-items: center; gap: 10px; }
+        .menu-logo-mark {
+          width: 34px; height: 34px; background: #0a0a0a;
+          border-radius: 8px; display: flex; align-items: center; justify-content: center;
+        }
+        .menu-logo-mark .material-symbols-outlined { color: white; font-size: 16px; }
+        .menu-logo-name {
+          font-family: 'Playfair Display', serif;
+          font-size: 1.15rem; font-weight: 700; color: #0a0a0a; letter-spacing: -0.01em;
+        }
+        .menu-cart-btn {
+          position: relative; background: none; border: none;
+          width: 38px; height: 38px; border-radius: 10px;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: background 0.15s ease;
+        }
+        .menu-cart-btn:hover { background: rgba(0,0,0,0.05); }
+        .menu-cart-btn .material-symbols-outlined { color: #0a0a0a; font-size: 20px; }
+        .menu-cart-count {
+          position: absolute; top: 2px; right: 2px;
+          background: #0a0a0a; color: white; font-size: 9px; font-weight: 600;
+          width: 16px; height: 16px; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          border: 1.5px solid #f5f4f0;
+        }
+
+        /* ── Main content ── */
+        .menu-main { max-width: 768px; margin: 0 auto; padding: 24px 20px; }
+
+        /* ── Hero section ── */
+        .menu-hero { margin-bottom: 24px; }
+        .menu-hero-label {
+          font-size: 0.68rem; letter-spacing: 0.2em; text-transform: uppercase;
+          color: rgba(0,0,0,0.35); font-weight: 500; margin-bottom: 4px;
+        }
+        .menu-hero-title {
+          font-family: 'Playfair Display', serif; font-size: 1.7rem; font-weight: 700;
+          color: #0a0a0a; letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 4px;
+        }
+        .menu-hero-sub { font-size: 0.85rem; color: rgba(0,0,0,0.4); font-weight: 400; margin: 0; }
+
+        /* ── Search ── */
+        .menu-search-wrap { position: relative; margin-bottom: 16px; }
+        .menu-search-wrap .material-symbols-outlined {
+          position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+          color: rgba(0,0,0,0.3); font-size: 18px; pointer-events: none;
+        }
+        .menu-search {
+          width: 100%; background: white; border: 0.5px solid rgba(0,0,0,0.1);
+          border-radius: 12px; padding: 12px 16px 12px 42px;
+          font-size: 0.875rem; font-family: 'Outfit', sans-serif; color: #0a0a0a;
+          outline: none; transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+        .menu-search::placeholder { color: rgba(0,0,0,0.3); }
+        .menu-search:focus { border-color: rgba(0,0,0,0.3); box-shadow: 0 0 0 3px rgba(0,0,0,0.05); }
+
+        /* ── Category nav ── */
+        .menu-cats {
+          display: flex; gap: 6px; overflow-x: auto;
+          -ms-overflow-style: none; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+          margin: 0 -20px; padding: 4px 20px 12px;
+          position: sticky; top: 63px; z-index: 40; background: #f5f4f0;
+        }
+        .menu-cats::-webkit-scrollbar { display: none; }
+        .menu-cat-btn {
+          flex-shrink: 0; padding: 7px 16px; border-radius: 100px;
+          font-family: 'Outfit', sans-serif; font-size: 0.78rem; font-weight: 500;
+          border: 0.5px solid transparent; cursor: pointer;
+          transition: all 0.15s ease; white-space: nowrap;
+        }
+        .menu-cat-btn.inactive { background: white; border-color: rgba(0,0,0,0.08); color: rgba(0,0,0,0.55); }
+        .menu-cat-btn.inactive:hover { border-color: rgba(0,0,0,0.2); color: #0a0a0a; }
+        .menu-cat-btn.active { background: #0a0a0a; color: white; }
+
+        /* ── Section heading ── */
+        .menu-section-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 16px; }
+        .menu-section-title {
+          font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700;
+          color: #0a0a0a; margin: 0;
+        }
+        .menu-section-line { flex: 1; height: 0.5px; background: rgba(0,0,0,0.1); }
+
+        /* ── Item grid ── */
+        .menu-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        @media (max-width: 480px) { .menu-grid { grid-template-columns: 1fr; } }
+
+        /* ── Item card ── */
+        .menu-card {
+          background: white; border-radius: 16px; overflow: hidden;
+          border: 0.5px solid rgba(0,0,0,0.07); display: flex; flex-direction: column;
+          transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+        }
+        .menu-card:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.08); border-color: rgba(0,0,0,0.12); }
+        .menu-card-img-wrap { height: 160px; overflow: hidden; position: relative; }
+        .menu-card-img {
+          width: 100%; height: 100%; object-fit: cover;
+          transition: transform 0.5s ease; filter: grayscale(15%);
+        }
+        .menu-card:hover .menu-card-img { transform: scale(1.04); }
+        .menu-card-badge {
+          position: absolute; top: 10px; right: 10px;
+          background: #0a0a0a; color: white; font-size: 9px; font-weight: 600;
+          letter-spacing: 0.1em; text-transform: uppercase; padding: 4px 10px; border-radius: 100px;
+        }
+        .menu-card-body { padding: 14px; flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
+        .menu-card-top { margin-bottom: 10px; }
+        .menu-card-name-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; gap: 8px; }
+        .menu-card-name { font-size: 0.95rem; font-weight: 600; color: #0a0a0a; line-height: 1.25; margin: 0; }
+        .menu-card-price { font-size: 0.95rem; font-weight: 600; color: #0a0a0a; flex-shrink: 0; letter-spacing: -0.01em; }
+        .menu-card-desc { font-size: 0.78rem; color: rgba(0,0,0,0.45); line-height: 1.5; margin: 0; }
+        .menu-card-footer { display: flex; align-items: center; gap: 6px; }
+        .menu-tag { background: #f0efe9; color: rgba(0,0,0,0.5); font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 8px; border-radius: 6px; }
+        .menu-card-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+        .menu-qty-btn {
+          width: 32px; height: 32px; border-radius: 50%;
+          border: 0.5px solid rgba(0,0,0,0.15); background: white;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: all 0.15s ease;
+        }
+        .menu-qty-btn:hover { background: #f0efe9; border-color: rgba(0,0,0,0.25); }
+        .menu-qty-btn:active { transform: scale(0.9); }
+        .menu-qty-btn .material-symbols-outlined { font-size: 14px; color: #0a0a0a; }
+        .menu-qty-num { font-size: 0.88rem; font-weight: 600; color: #0a0a0a; min-width: 18px; text-align: center; }
+        .menu-add-btn {
+          width: 36px; height: 36px; border-radius: 50%;
+          background: #0a0a0a; color: white; border: none;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; transition: all 0.15s ease; box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+        }
+        .menu-add-btn:hover { background: #2a2a2a; transform: scale(1.05); }
+        .menu-add-btn:active { transform: scale(0.92); }
+        .menu-add-btn .material-symbols-outlined { font-size: 18px; }
+
+        /* ── Loading skeleton ── */
+        .menu-skeleton {
+          grid-column: 1 / -1;
+          display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+        }
+        @media (max-width: 480px) { .menu-skeleton { grid-template-columns: 1fr; } }
+        .skeleton-card {
+          background: white; border-radius: 16px; overflow: hidden;
+          border: 0.5px solid rgba(0,0,0,0.07);
+        }
+        .skeleton-img { height: 160px; background: #ebebeb; animation: shimmer 1.4s ease-in-out infinite; }
+        .skeleton-body { padding: 14px; }
+        .skeleton-line {
+          height: 12px; border-radius: 6px; background: #ebebeb;
+          animation: shimmer 1.4s ease-in-out infinite; margin-bottom: 8px;
+        }
+        .skeleton-line.short { width: 60%; }
+        .skeleton-line.medium { width: 80%; }
+        @keyframes shimmer {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+
+        /* ── Empty state ── */
+        .menu-empty { grid-column: 1 / -1; text-align: center; padding: 64px 20px; color: rgba(0,0,0,0.3); }
+        .menu-empty .material-symbols-outlined { font-size: 48px; display: block; margin-bottom: 12px; }
+        .menu-empty p { font-size: 0.95rem; font-weight: 500; margin: 0; }
+
+        /* ── Bottom nav ── */
+        .menu-bottom-nav {
+          position: fixed; bottom: 0; left: 0; width: 100%; background: white;
+          border-top: 0.5px solid rgba(0,0,0,0.08);
+          display: flex; justify-content: space-around; align-items: center;
+          padding: 10px 16px 18px; z-index: 50;
+        }
+        .menu-nav-item {
+          display: flex; flex-direction: column; align-items: center;
+          gap: 2px; font-size: 10px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase;
+          padding: 6px 16px; border-radius: 10px; border: none; background: none; cursor: pointer;
+          text-decoration: none; transition: all 0.15s ease; color: rgba(0,0,0,0.3);
+        }
+        .menu-nav-item:active { transform: scale(0.93); }
+        .menu-nav-item.active { background: #0a0a0a; color: white; }
+        .menu-nav-item .material-symbols-outlined { font-size: 20px; }
+        .menu-nav-item.disabled { opacity: 0.25; pointer-events: none; }
+
+        /* ── Sticky cart bar ── */
+        .menu-cart-bar {
+          position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%);
+          width: calc(100% - 32px); max-width: 720px;
+          background: #0a0a0a; color: white; border-radius: 16px;
+          padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;
+          z-index: 45; cursor: pointer;
+          transition: transform 0.2s ease, box-shadow 0.2s ease;
+          box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+        }
+        .menu-cart-bar:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+        .menu-cart-bar:active { transform: translateX(-50%) scale(0.99); }
+        .menu-cart-bar-left { display: flex; align-items: center; gap: 12px; }
+        .menu-cart-bar-icon {
+          width: 38px; height: 38px; background: rgba(255,255,255,0.1);
+          border-radius: 10px; display: flex; align-items: center; justify-content: center;
+        }
+        .menu-cart-bar-icon .material-symbols-outlined { font-size: 18px; }
+        .menu-cart-bar-label { font-size: 11px; color: rgba(255,255,255,0.5); letter-spacing: 0.04em; }
+        .menu-cart-bar-total { font-size: 1.1rem; font-weight: 600; letter-spacing: -0.01em; }
+        .menu-cart-bar-cta {
+          background: white; color: #0a0a0a; font-family: 'Outfit', sans-serif;
+          font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+          padding: 9px 20px; border-radius: 10px; border: none; cursor: pointer;
+        }
+
+        /* ── Cart Drawer ── */
+        .cart-overlay { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; justify-content: flex-end; }
+        .cart-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.5); }
+        .cart-sheet {
+          position: relative; background: white; border-radius: 24px 24px 0 0;
+          padding: 24px; max-height: 88svh; display: flex; flex-direction: column;
+          animation: slideUp 0.35s cubic-bezier(0.16,1,0.3,1);
+        }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        .cart-handle { width: 36px; height: 4px; background: rgba(0,0,0,0.1); border-radius: 2px; margin: -8px auto 20px; }
+        .cart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .cart-title { font-family: 'Playfair Display', serif; font-size: 1.2rem; font-weight: 700; color: #0a0a0a; margin: 0; }
+        .cart-close {
+          width: 32px; height: 32px; background: rgba(0,0,0,0.05); border: none; border-radius: 50%;
+          display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s ease;
+        }
+        .cart-close:hover { background: rgba(0,0,0,0.1); }
+        .cart-close .material-symbols-outlined { font-size: 17px; color: #0a0a0a; }
+        .cart-items { flex: 1; overflow-y: auto; margin-bottom: 16px; -ms-overflow-style: none; scrollbar-width: none; }
+        .cart-items::-webkit-scrollbar { display: none; }
+        .cart-empty { text-align: center; padding: 40px 0; color: rgba(0,0,0,0.3); }
+        .cart-empty .material-symbols-outlined { font-size: 40px; display: block; margin-bottom: 8px; }
+        .cart-empty p { font-size: 0.88rem; margin: 0; }
+        .cart-item {
+          display: flex; align-items: center; gap: 12px; padding: 12px 0;
+          border-bottom: 0.5px solid rgba(0,0,0,0.06);
+        }
+        .cart-item:last-child { border-bottom: none; }
+        .cart-item-img { width: 60px; height: 60px; border-radius: 10px; object-fit: cover; filter: grayscale(15%); flex-shrink: 0; }
+        .cart-item-info { flex: 1; }
+        .cart-item-name { font-size: 0.9rem; font-weight: 600; color: #0a0a0a; margin: 0 0 2px; }
+        .cart-item-price { font-size: 0.85rem; color: rgba(0,0,0,0.5); margin: 0; font-weight: 500; }
+        .cart-item-controls { display: flex; align-items: center; gap: 8px; }
+        .cart-ctrl-btn {
+          width: 30px; height: 30px; border-radius: 50%; border: 0.5px solid rgba(0,0,0,0.12); background: white;
+          display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.15s ease;
+        }
+        .cart-ctrl-btn:hover { background: #f0efe9; }
+        .cart-ctrl-btn:active { transform: scale(0.9); }
+        .cart-ctrl-btn .material-symbols-outlined { font-size: 13px; color: #0a0a0a; }
+        .cart-ctrl-qty { font-size: 0.85rem; font-weight: 600; color: #0a0a0a; min-width: 16px; text-align: center; }
+        .cart-ctrl-add {
+          width: 30px; height: 30px; border-radius: 50%; background: #0a0a0a; color: white; border: none;
+          display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.15s ease;
+        }
+        .cart-ctrl-add:hover { background: #2a2a2a; }
+        .cart-ctrl-add:active { transform: scale(0.9); }
+        .cart-ctrl-add .material-symbols-outlined { font-size: 13px; }
+        .cart-notes {
+          width: 100%; background: #f5f4f0; border: 0.5px solid rgba(0,0,0,0.08);
+          border-radius: 12px; padding: 12px; font-family: 'Outfit', sans-serif; font-size: 0.85rem; color: #0a0a0a;
+          resize: none; outline: none; margin-bottom: 16px; transition: border-color 0.2s ease;
+        }
+        .cart-notes::placeholder { color: rgba(0,0,0,0.3); }
+        .cart-notes:focus { border-color: rgba(0,0,0,0.25); }
+        .cart-total-row {
+          display: flex; justify-content: space-between; align-items: center;
+          border-top: 0.5px solid rgba(0,0,0,0.08); padding-top: 14px; margin-bottom: 16px;
+        }
+        .cart-total-label { font-size: 0.8rem; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(0,0,0,0.4); }
+        .cart-total-amount { font-family: 'Playfair Display', serif; font-size: 1.4rem; font-weight: 700; color: #0a0a0a; letter-spacing: -0.02em; }
+        .cart-place-btn {
+          width: 100%; height: 56px; background: #0a0a0a; color: white; border: none;
+          border-radius: 14px; font-family: 'Outfit', sans-serif;
+          font-size: 0.9rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+          cursor: pointer; transition: all 0.2s ease; box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+        .cart-place-btn:hover { background: #1a1a1a; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
+        .cart-place-btn:active { transform: scale(0.99); }
+        .cart-place-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .cart-place-btn .material-symbols-outlined { font-size: 17px; }
+        .animate-spin { animation: spin 1s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+      `}</style>
+
+      <div className="menu-root">
+        {/* Header */}
+        <header className="menu-header">
+          <div className="menu-header-inner">
+            <div className="menu-logo">
+              <div className="menu-logo-mark">
+                <span className="material-symbols-outlined">restaurant</span>
+              </div>
+              <span className="menu-logo-name">{settings.restaurantName}</span>
             </div>
-            <span className="text-lg font-extrabold tracking-tight text-primary">{settings.restaurantName}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowCart(true)} className="relative hover:bg-slate-50 transition-colors p-2 rounded-full active:scale-95 duration-200">
-              <span className="material-symbols-outlined text-slate-500">shopping_cart</span>
-              {cartCount > 0 && (<span className="absolute top-0 right-0 bg-primary text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold">{cartCount}</span>)}
+            <button onClick={() => setShowCart(true)} className="menu-cart-btn">
+              <span className="material-symbols-outlined">shopping_cart</span>
+              {cartCount > 0 && <span className="menu-cart-count">{cartCount}</span>}
             </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <main className="max-w-3xl mx-auto px-4 md:px-6 pt-5 space-y-6">
-        <section>
-          <h1 className="text-2xl text-primary font-black">Welcome! You&apos;re at Table {tableNumber}</h1>
-          <p className="text-base text-zinc-500">Order your favorites directly from your phone.</p>
-        </section>
+        <main className="menu-main">
+          {/* Hero */}
+          <section className="menu-hero">
+            <p className="menu-hero-label">Table {tableNumber}</p>
+            <h1 className="menu-hero-title">What would you<br /><em>like today?</em></h1>
+            <p className="menu-hero-sub">Order directly from your phone — no waiting.</p>
+          </section>
 
-        <div className="relative">
-          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">search</span>
-          <input type="text" placeholder="Search menu..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-zinc-100 border-none rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary transition-all" />
-        </div>
-
-        <nav className="flex gap-2 overflow-x-auto hide-scrollbar -mx-4 px-4 sticky top-[68px] bg-background py-2 z-40">
-          {CATEGORIES.map(cat => (
-            <button key={cat} onClick={() => setActiveCategory(cat)} className={`flex-shrink-0 px-4 py-2 rounded-full text-sm transition-all ${activeCategory === cat ? 'bg-primary text-white shadow-md font-bold' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>{cat}</button>
-          ))}
-        </nav>
-
-        <section className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <div className="col-span-full"><h2 className="text-xl font-bold border-l-4 border-primary pl-3">{activeCategory}</h2></div>
-          {filteredItems.length === 0 && (<div className="col-span-full text-center py-16 text-zinc-400"><span className="material-symbols-outlined text-5xl mb-3 block">search_off</span><p className="text-lg font-semibold">No items found</p></div>)}
-          {filteredItems.map(item => {
-            const qty = getCartQty(item.id)
-            return (
-              <div key={item.id} className="group bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-lg transition-all border border-zinc-100 flex flex-col">
-                <div className="h-48 overflow-hidden relative">
-                  <img src={item.image} alt={item.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                  {item.badge && (<span className="absolute top-3 right-3 bg-tertiary-fixed text-on-tertiary-fixed px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider">{item.badge}</span>)}
-                </div>
-                <div className="p-4 flex-grow flex flex-col justify-between">
-                  <div>
-                    <div className="flex justify-between items-start mb-1">
-                      <h3 className="font-bold text-lg text-zinc-900">{item.name}</h3>
-                      <span className="font-bold text-lg text-primary ml-2">₱{item.price.toFixed(2)}</span>
-                    </div>
-                    <p className="text-sm text-zinc-500 mb-3">{item.description}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {item.tags?.map(tag => (<span key={tag} className="bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-lg text-[10px] font-bold">{tag}</span>))}
-                    <div className="ml-auto flex items-center gap-2">
-                      {qty > 0 ? (<><button onClick={() => removeFromCart(item.id)} className="w-9 h-9 bg-zinc-100 rounded-full flex items-center justify-center active:scale-90 transition-transform font-bold text-zinc-900"><span className="material-symbols-outlined text-sm">remove</span></button><span className="font-bold text-zinc-900 w-5 text-center">{qty}</span></>) : null}
-                      <button onClick={() => addToCart(item)} className="w-10 h-10 bg-primary text-white rounded-full flex items-center justify-center shadow-md active:scale-90 transition-transform"><span className="material-symbols-outlined">add</span></button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </section>
-      </main>
-
-      {/* Bottom nav */}
-      <nav className="fixed bottom-0 left-0 w-full flex justify-around items-center px-4 py-3 pb-safe bg-white border-t border-slate-100 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] rounded-t-2xl z-50">
-        <div className="flex flex-col items-center justify-center text-primary bg-orange-50 rounded-xl px-4 py-1.5 text-[11px] font-semibold">
-          <span className="material-symbols-outlined">restaurant_menu</span><span>Menu</span>
-        </div>
-        <button onClick={() => setShowCart(true)} className="flex flex-col items-center justify-center text-slate-400 text-[11px] font-semibold active:scale-90 transition-transform">
-          <span className="material-symbols-outlined">receipt_long</span><span>Cart {cartCount > 0 ? `(${cartCount})` : ''}</span>
-        </button>
-        {/* BUG-07: Conditional link — only active when a real order exists */}
-        {lastOrderId ? (
-          <Link href={`/status/${lastOrderId}`} className="flex flex-col items-center justify-center text-slate-400 text-[11px] font-semibold active:scale-90 transition-transform">
-            <span className="material-symbols-outlined">delivery_dining</span><span>Order</span>
-          </Link>
-        ) : (
-          <div className="flex flex-col items-center justify-center text-slate-200 text-[11px] font-semibold cursor-not-allowed">
-            <span className="material-symbols-outlined">delivery_dining</span><span>Order</span>
+          {/* Search */}
+          <div className="menu-search-wrap">
+            <span className="material-symbols-outlined">search</span>
+            <input
+              type="text"
+              placeholder="Search menu..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="menu-search"
+            />
           </div>
-        )}
-      </nav>
 
-      {/* Sticky cart bar */}
-      {cartCount > 0 && !showCart && (
-        <div onClick={() => setShowCart(true)} className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[calc(100%-32px)] max-w-2xl bg-primary text-white p-4 rounded-2xl shadow-xl flex items-center justify-between z-[45] cursor-pointer active:scale-[0.98] transition-transform">
-          <div className="flex items-center gap-3">
-            <div className="bg-white/20 w-10 h-10 rounded-xl flex items-center justify-center"><span className="material-symbols-outlined">shopping_cart</span></div>
-            <div><p className="text-xs leading-tight">{cartCount} Item{cartCount !== 1 ? 's' : ''} in Cart</p><p className="font-bold text-lg">₱{cartTotal.toFixed(2)}</p></div>
-          </div>
-          <span className="bg-white text-primary px-5 py-2 rounded-xl text-xs shadow-sm font-bold">View Cart</span>
-        </div>
-      )}
+          {/* Category nav — FIX-7: 'All' tab first so customers see everything by default */}
+          <nav className="menu-cats hide-scrollbar">
+            {['All', ...CATEGORIES].map(cat => (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`menu-cat-btn ${activeCategory === cat ? 'active' : 'inactive'}`}
+              >
+                {cat}
+              </button>
+            ))}
+          </nav>
 
-      {/* Cart Drawer */}
-      {showCart && (
-        <div className="fixed inset-0 z-[60] flex flex-col justify-end">
-          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setShowCart(false)} />
-          <div className="relative bg-white rounded-t-3xl p-6 max-h-[85vh] flex flex-col shadow-2xl animate-fade-in">
-            <div className="flex justify-between items-center mb-5">
-              <h2 className="text-xl font-bold">Your Cart — Table {tableNumber}</h2>
-              <button onClick={() => setShowCart(false)} className="p-1 hover:bg-zinc-100 rounded-full"><span className="material-symbols-outlined">close</span></button>
+          {/* Items */}
+          <section>
+            <div className="menu-section-heading">
+              <h2 className="menu-section-title">{activeCategory}</h2>
+              <div className="menu-section-line" />
             </div>
-            <div className="flex-1 overflow-y-auto space-y-4 mb-4">
-              {cart.length === 0 ? (
-                <div className="text-center py-10 text-zinc-400"><span className="material-symbols-outlined text-5xl block mb-2">shopping_cart</span><p>Your cart is empty</p></div>
-              ) : (
-                cart.map(item => (
-                  <div key={item.id} className="flex items-center gap-3">
-                    <img src={item.image} alt={item.name} className="w-16 h-16 rounded-xl object-cover flex-shrink-0" />
-                    <div className="flex-1"><p className="font-bold text-zinc-900">{item.name}</p><p className="text-primary font-bold">₱{(item.price * item.quantity).toFixed(2)}</p></div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => removeFromCart(item.id)} className="w-8 h-8 bg-zinc-100 rounded-full flex items-center justify-center active:scale-90 transition-transform"><span className="material-symbols-outlined text-sm">remove</span></button>
-                      <span className="font-bold w-4 text-center">{item.quantity}</span>
-                      {/* BUG-05: Null-safe check instead of non-null assertion */}
-                      <button onClick={() => { const mi = menuItems.find(m => m.id === item.id); if (mi) addToCart(mi) }} className="w-8 h-8 bg-primary text-white rounded-full flex items-center justify-center active:scale-90 transition-transform"><span className="material-symbols-outlined text-sm">add</span></button>
+            <div className="menu-grid">
+              {/* FIX-2: Show skeletons while Firestore is loading instead of empty state */}
+              {menuLoading ? (
+                <div className="menu-skeleton">
+                  {[1, 2, 3, 4].map(n => (
+                    <div key={n} className="skeleton-card">
+                      <div className="skeleton-img" />
+                      <div className="skeleton-body">
+                        <div className="skeleton-line medium" />
+                        <div className="skeleton-line short" />
+                      </div>
                     </div>
-                  </div>
-                ))
+                  ))}
+                </div>
+              ) : filteredItems.length === 0 ? (
+                <div className="menu-empty">
+                  <span className="material-symbols-outlined">search_off</span>
+                  <p>{searchQuery ? 'No items match your search' : 'No items in this category yet'}</p>
+                </div>
+              ) : (
+                filteredItems.map(item => {
+                  const qty = getCartQty(item.id)
+                  return (
+                    <div key={item.id} className="menu-card">
+                      <div className="menu-card-img-wrap">
+                        <img
+                          src={item.image}
+                          alt={item.name}
+                          className="menu-card-img"
+                          // FIX-8: Fallback if image URL is broken / local path not found
+                          onError={e => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400' }}
+                        />
+                        {item.badge && <span className="menu-card-badge">{item.badge}</span>}
+                      </div>
+                      <div className="menu-card-body">
+                        <div className="menu-card-top">
+                          <div className="menu-card-name-row">
+                            <h3 className="menu-card-name">{item.name}</h3>
+                            <span className="menu-card-price">₱{item.price.toFixed(2)}</span>
+                          </div>
+                          <p className="menu-card-desc">{item.description}</p>
+                        </div>
+                        <div className="menu-card-footer">
+                          {item.tags?.map(tag => <span key={tag} className="menu-tag">{tag}</span>)}
+                          <div className="menu-card-actions">
+                            {qty > 0 && (
+                              <>
+                                <button onClick={() => removeFromCart(item.id)} className="menu-qty-btn">
+                                  <span className="material-symbols-outlined">remove</span>
+                                </button>
+                                <span className="menu-qty-num">{qty}</span>
+                              </>
+                            )}
+                            <button onClick={() => addToCart(item)} className="menu-add-btn">
+                              <span className="material-symbols-outlined">add</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })
               )}
             </div>
-            {cart.length > 0 && (
-              <>
-                <textarea className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-sm resize-none mb-4 focus:outline-none focus:ring-2 focus:ring-primary" rows={2} placeholder="Special instructions, allergies..." value={specialInstructions} onChange={e => setSpecialInstructions(e.target.value)} />
-                <div className="flex justify-between items-center mb-4 font-bold text-lg"><span>Total</span><span className="text-primary">₱{cartTotal.toFixed(2)}</span></div>
-                <button onClick={placeOrder} disabled={isPlacing} className="w-full h-14 bg-primary text-white rounded-2xl font-bold text-lg flex items-center justify-center gap-2 shadow-xl shadow-primary/30 active:scale-[0.98] transition-all disabled:opacity-60">
-                  {isPlacing ? (<><span className="material-symbols-outlined animate-spin text-sm">progress_activity</span>Placing Order...</>) : (<>Place Order <span className="material-symbols-outlined">arrow_forward</span></>)}
-                </button>
-              </>
-            )}
+          </section>
+        </main>
+
+        {/* Bottom nav */}
+        <nav className="menu-bottom-nav">
+          <button className="menu-nav-item active">
+            <span className="material-symbols-outlined">restaurant_menu</span>
+            Menu
+          </button>
+          <button onClick={() => setShowCart(true)} className="menu-nav-item">
+            <span className="material-symbols-outlined">receipt_long</span>
+            Cart{cartCount > 0 ? ` (${cartCount})` : ''}
+          </button>
+          {lastOrderId ? (
+            <Link href={`/status/${lastOrderId}`} className="menu-nav-item">
+              <span className="material-symbols-outlined">delivery_dining</span>
+              Order
+            </Link>
+          ) : (
+            <div className="menu-nav-item disabled">
+              <span className="material-symbols-outlined">delivery_dining</span>
+              Order
+            </div>
+          )}
+        </nav>
+
+        {/* Sticky cart bar */}
+        {cartCount > 0 && !showCart && (
+          <div onClick={() => setShowCart(true)} className="menu-cart-bar">
+            <div className="menu-cart-bar-left">
+              <div className="menu-cart-bar-icon">
+                <span className="material-symbols-outlined">shopping_cart</span>
+              </div>
+              <div>
+                <p className="menu-cart-bar-label">{cartCount} Item{cartCount !== 1 ? 's' : ''} in Cart</p>
+                <p className="menu-cart-bar-total">₱{cartTotal.toFixed(2)}</p>
+              </div>
+            </div>
+            <button className="menu-cart-bar-cta">View Cart</button>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+
+        {/* Cart Drawer */}
+        {showCart && (
+          <div className="cart-overlay">
+            <div className="cart-backdrop" onClick={() => setShowCart(false)} />
+            <div className="cart-sheet">
+              <div className="cart-handle" />
+              <div className="cart-header">
+                <h2 className="cart-title">Your Cart — Table {tableNumber}</h2>
+                <button onClick={() => setShowCart(false)} className="cart-close">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+              <div className="cart-items">
+                {cart.length === 0 ? (
+                  <div className="cart-empty">
+                    <span className="material-symbols-outlined">shopping_cart</span>
+                    <p>Your cart is empty</p>
+                  </div>
+                ) : (
+                  cart.map(item => (
+                    <div key={item.id} className="cart-item">
+                      <img
+                        src={item.image}
+                        alt={item.name}
+                        className="cart-item-img"
+                        onError={e => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400' }}
+                      />
+                      <div className="cart-item-info">
+                        <p className="cart-item-name">{item.name}</p>
+                        <p className="cart-item-price">₱{(item.price * item.quantity).toFixed(2)}</p>
+                      </div>
+                      <div className="cart-item-controls">
+                        <button onClick={() => removeFromCart(item.id)} className="cart-ctrl-btn">
+                          <span className="material-symbols-outlined">remove</span>
+                        </button>
+                        <span className="cart-ctrl-qty">{item.quantity}</span>
+                        <button
+                          onClick={() => { const mi = menuItems.find(m => m.id === item.id); if (mi) addToCart(mi) }}
+                          className="cart-ctrl-add"
+                        >
+                          <span className="material-symbols-outlined">add</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+              {cart.length > 0 && (
+                <>
+                  <textarea
+                    className="cart-notes"
+                    rows={2}
+                    placeholder="Special instructions, allergies..."
+                    value={specialInstructions}
+                    onChange={e => setSpecialInstructions(e.target.value)}
+                  />
+                  <div className="cart-total-row">
+                    <span className="cart-total-label">Total</span>
+                    <span className="cart-total-amount">₱{cartTotal.toFixed(2)}</span>
+                  </div>
+                  <button onClick={placeOrder} disabled={isPlacing} className="cart-place-btn">
+                    {isPlacing ? (
+                      <><span className="material-symbols-outlined animate-spin">progress_activity</span>Placing Order...</>
+                    ) : (
+                      <>Place Order<span className="material-symbols-outlined">arrow_forward</span></>
+                    )}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </>
   )
 }

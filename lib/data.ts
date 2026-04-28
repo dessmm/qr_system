@@ -38,7 +38,10 @@ const MENU_COL = 'menu';
 const ORDERS_COL = 'orders';
 const TABLES_COL = 'tables';
 
+// ═══════════════════════════════════════════════════════════════════════════════
 // TABLE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export type TableStatus = 'available' | 'occupied' | 'reserved'
 
 export interface Table {
@@ -74,6 +77,7 @@ export async function createTable(table: Omit<Table, 'id' | 'createdAt' | 'updat
       createdAt: Date.now(),
       updatedAt: Date.now()
     });
+    console.log('Table created with ID:', docRef.id);
     return docRef.id;
   } catch (error) {
     console.error("Error creating table:", error);
@@ -88,8 +92,19 @@ export async function updateTableStatus(tableId: string, status: TableStatus, or
       currentOrderId: orderId || null,
       updatedAt: Date.now()
     });
+    console.log('Table status updated:', tableId, status);
   } catch (error) {
     console.error("Error updating table status:", error);
+  }
+}
+
+// ✅ NEW: Delete table function
+export async function deleteTable(tableId: string) {
+  try {
+    await deleteDoc(doc(db, TABLES_COL, tableId));
+    console.log('Table deleted:', tableId);
+  } catch (error) {
+    console.error("Error deleting table:", error);
   }
 }
 
@@ -143,7 +158,10 @@ export function listenToTables(callback: (tables: Table[]) => void) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
 // SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export async function getSettings(): Promise<AppSettings> {
   try {
     const docRef = doc(db, SETTINGS_COL, 'general');
@@ -158,14 +176,16 @@ export async function getSettings(): Promise<AppSettings> {
   }
 }
 
-// BUG-18: Removed alert() — callers handle errors via try/catch
 export async function saveSettings(settings: AppSettings): Promise<void> {
   console.log("Saving settings to Firestore:", settings);
   await setDoc(doc(db, SETTINGS_COL, 'general'), settings);
   console.log("Settings successfully saved!");
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
 // MENU ITEMS
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export interface MenuItem {
   id: string
   name: string
@@ -178,7 +198,6 @@ export interface MenuItem {
   available: boolean
 }
 
-// BUG-06: Added 'Sides' to match the MenuItem type union
 export const CATEGORIES = ['Appetizers', 'Mains', 'Drinks', 'Desserts', 'Sides'] as const
 
 export async function getMenuItems(): Promise<MenuItem[]> {
@@ -192,12 +211,11 @@ export async function getMenuItems(): Promise<MenuItem[]> {
   }
 }
 
-// BUG-17: Use updateDoc for existing items to preserve unknown fields
 export async function saveMenuItem(item: Partial<MenuItem>) {
   try {
     if (item.id) {
       const { id, ...data } = item;
-      await updateDoc(doc(db, MENU_COL, id), data); // BUG-17: updateDoc instead of setDoc
+      await updateDoc(doc(db, MENU_COL, id), data);
     } else {
       await addDoc(collection(db, MENU_COL), { ...item, available: true });
     }
@@ -214,7 +232,10 @@ export async function deleteMenuItem(id: string) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
 // ORDERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export interface CartItem {
   id: string
   name: string
@@ -253,7 +274,7 @@ export async function addOrder(order: Omit<Order, 'id'>) {
 // BUG-02: Replaced private docRef helper with direct doc() call for consistency
 export async function getOrder(id: string): Promise<Order | null> {
   try {
-    const docSnap = await getDoc(doc(db, ORDERS_COL, id)); // BUG-02: direct pattern
+    const docSnap = await getDoc(doc(db, ORDERS_COL, id));
     if (docSnap.exists()) {
       return { id: docSnap.id, ...docSnap.data() } as Order;
     }
@@ -263,8 +284,6 @@ export async function getOrder(id: string): Promise<Order | null> {
     return null;
   }
 }
-
-// BUG-02: Removed private docRef helper — was only used once and shadowed imports
 
 export async function updateOrderStatus(orderId: string, status: OrderStatus) {
   try {
@@ -278,7 +297,10 @@ export async function updateOrderStatus(orderId: string, status: OrderStatus) {
   }
 }
 
-// REAL-TIME LISTENERS (React hooks would be better, but these are simple observers)
+// ═══════════════════════════════════════════════════════════════════════════════
+// REAL-TIME LISTENERS
+// ═══════════════════════════════════════════════════════════════════════════════
+
 export function listenToOrders(callback: (orders: Order[]) => void) {
   const q = query(collection(db, ORDERS_COL), orderBy('createdAt', 'desc'));
   return onSnapshot(q, 
@@ -331,6 +353,3 @@ export function listenToOrder(id: string, callback: (order: Order | null) => voi
     (error) => console.error('[listenToOrder] Firestore error — check security rules:', error)
   );
 }
-
-// BUG-03: Removed generateOrderId() — dead code with collision risk.
-// Firestore addDoc auto-generates collision-safe IDs.

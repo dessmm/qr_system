@@ -1,13 +1,11 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { CartProvider, useCart } from '@/app/cashier/context/CartContext'
 import { ProductCard } from '@/app/cashier/components/ProductCard'
 import { CartSummary } from '@/app/cashier/components/CartSummary'
 import { TransactionHistory } from '@/app/cashier/components/TransactionHistory'
 import { listenToMenu, listenToTables, listenToOrders, MenuItem, CATEGORIES, Table, TableStatus, updateTableStatus, Order } from '@/lib/data'
-
-type POSCategory = typeof CATEGORIES[number] | 'All'
 
 function CashierContent() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -16,22 +14,68 @@ function CashierContent() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
   const [tables, setTables] = useState<Table[]>([])
   const [orders, setOrders] = useState<Order[]>([])
-  const [selectedTable, setSelectedTable] = useState<Table | null>(null)
+
+  // FIX 1 & 3: Store only the selected table ID instead of the full object.
+  // This prevents stale state — the UI always derives the current table from
+  // the live `tables` array rather than a snapshot taken at click-time.
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null)
+
+  // FIX 4: Optimistic status map — keyed by tableId, holds the status that was
+  // applied locally before Firebase confirms the write.  Merged during render so
+  // the UI updates instantly and reverts automatically once real data arrives.
+  const [optimisticStatuses, setOptimisticStatuses] = useState<Record<string, TableStatus>>({})
+
   const { addTransaction, recentTransactions } = useCart()
 
   useEffect(() => {
     const unsubMenu = listenToMenu(setMenuItems)
-    const unsubTables = listenToTables(setTables)
+    const unsubTables = listenToTables((incoming: Table[]) => {
+      setTables(incoming)
+      // FIX 5: When Firebase confirms a status, drop it from the optimistic map
+      // so the confirmed value (same as the optimistic one) takes over cleanly —
+      // zero flicker, no double-update visible to the user.
+      setOptimisticStatuses(prev => {
+        const next = { ...prev }
+        let changed = false
+        incoming.forEach(t => {
+          if (next[t.id] !== undefined && next[t.id] === t.status) {
+            delete next[t.id]
+            changed = true
+          }
+        })
+        return changed ? next : prev
+      })
+    })
     const unsubOrders = listenToOrders(setOrders)
     return () => { unsubMenu(); unsubTables(); unsubOrders() }
   }, [])
 
+  // FIX 2: Derive the selected table via useMemo so it is always the freshest
+  // version from the live `tables` array.  Merging optimisticStatuses here means
+  // every re-render reflects both real-time Firebase data AND any in-flight
+  // optimistic updates, keeping the detail panel perfectly in sync.
+  const tablesWithOptimistic = useMemo<Table[]>(() => {
+    if (Object.keys(optimisticStatuses).length === 0) return tables
+    return tables.map(t =>
+      optimisticStatuses[t.id] !== undefined
+        ? { ...t, status: optimisticStatuses[t.id] }
+        : t
+    )
+  }, [tables, optimisticStatuses])
+
+  const selectedTable = useMemo<Table | null>(
+    () => tablesWithOptimistic.find(t => t.id === selectedTableId) ?? null,
+    [tablesWithOptimistic, selectedTableId]
+  )
+
   // Filter products from Firebase
   const filteredProducts = useMemo(() => {
     return menuItems.filter(product => {
-      const matchesSearch = product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      const matchesSearch =
+        product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         product.description.toLowerCase().includes(searchQuery.toLowerCase())
-      const matchesCategory = selectedCategory === 'All' || product.category === selectedCategory
+      const matchesCategory =
+        selectedCategory === 'All' || product.category === selectedCategory
       return matchesSearch && matchesCategory && product.available
     })
   }, [menuItems, searchQuery, selectedCategory])
@@ -40,52 +84,53 @@ function CashierContent() {
     addTransaction(transaction)
   }
 
-  const handleTableSelect = (table: Table) => {
-    setSelectedTable(table)
-    setActiveTab('tables')
-  }
-
-  const handleTableStatusChange = async (tableId: string, status: TableStatus) => {
-    await updateTableStatus(tableId, status)
-  }
+  // FIX 4: Apply optimistic status immediately, then fire the async Firebase
+  // write.  If Firebase fails the optimistic entry stays visible until the next
+  // real update, keeping the UX snappy rather than frozen on a pending spinner.
+  const handleTableStatusChange = useCallback(
+    async (tableId: string, status: TableStatus) => {
+      setOptimisticStatuses(prev => ({ ...prev, [tableId]: status }))
+      try {
+        await updateTableStatus(tableId, status)
+      } catch (err) {
+        // On failure, remove the optimistic entry so Firebase's true value
+        // is shown on the next listener callback.
+        console.error('Failed to update table status:', err)
+        setOptimisticStatuses(prev => {
+          const next = { ...prev }
+          delete next[tableId]
+          return next
+        })
+      }
+    },
+    []
+  )
 
   const getStatusColor = (status: TableStatus) => {
     switch (status) {
-      case 'available':
-        return 'bg-green-100 text-green-700 border-green-200'
-      case 'occupied':
-        return 'bg-amber-100 text-amber-700 border-amber-200'
-      case 'reserved':
-        return 'bg-blue-100 text-blue-700 border-blue-200'
+      case 'available': return 'bg-green-100 text-green-700 border-green-200'
+      case 'occupied':  return 'bg-amber-100 text-amber-700 border-amber-200'
+      case 'reserved':  return 'bg-blue-100 text-blue-700 border-blue-200'
     }
   }
 
   const getStatusIcon = (status: TableStatus) => {
     switch (status) {
-      case 'available':
-        return 'check_circle'
-      case 'occupied':
-        return 'restaurant'
-      case 'reserved':
-        return 'event_seat'
+      case 'available': return 'check_circle'
+      case 'occupied':  return 'restaurant'
+      case 'reserved':  return 'event_seat'
     }
   }
 
   const tableStats = useMemo(() => ({
-    available: tables.filter(t => t.status === 'available').length,
-    occupied: tables.filter(t => t.status === 'occupied').length,
-    reserved: tables.filter(t => t.status === 'reserved').length,
-  }), [tables])
+    available: tablesWithOptimistic.filter(t => t.status === 'available').length,
+    occupied:  tablesWithOptimistic.filter(t => t.status === 'occupied').length,
+    reserved:  tablesWithOptimistic.filter(t => t.status === 'reserved').length,
+  }), [tablesWithOptimistic])
 
-  // Get active orders for a specific table
-  const getTableOrders = (tableId: string) => {
-    return orders.filter(order =>
-      order.status !== 'served' && order.tableNumber === tables.find(t => t.id === tableId)?.tableNumber
-    )
-  }
-
-  // Get order by ID
-  const getOrderById = (orderId: string) => {
+  // FIX 6: Guard against undefined — orders may not have loaded yet.
+  const getOrderById = (orderId: string | undefined): Order | undefined => {
+    if (!orderId) return undefined
     return orders.find(o => o.id === orderId)
   }
 
@@ -121,7 +166,9 @@ function CashierContent() {
           <div className="mb-6 space-y-4">
             {/* Search */}
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant">search</span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-on-surface-variant">
+                search
+              </span>
               <input
                 type="text"
                 value={searchQuery}
@@ -158,7 +205,9 @@ function CashierContent() {
 
           {filteredProducts.length === 0 && (
             <div className="text-center py-12">
-              <span className="material-symbols-outlined text-on-surface-variant text-5xl mb-3">search_off</span>
+              <span className="material-symbols-outlined text-on-surface-variant text-5xl mb-3">
+                search_off
+              </span>
               <p className="text-on-surface-variant">No products found</p>
               <p className="text-sm text-outline mt-1">Try adjusting your search or filters</p>
             </div>
@@ -236,34 +285,40 @@ function CashierContent() {
                 </div>
               </div>
 
-              {/* Tables List */}
-              <div className="grid grid-cols-2 gap-3">
-                {tables.map(table => (
+              {/* FIX 7: Responsive grid — 1 col on very small screens, 2 cols from
+                  xs upward.  Uses min-w-0 so text truncates instead of overflowing
+                  on narrow viewports. */}
+              <div className="grid grid-cols-1 xs:grid-cols-2 gap-3">
+                {tablesWithOptimistic.map(table => (
                   <button
                     key={table.id}
-                    onClick={() => setSelectedTable(table)}
-                    className={`p-4 rounded-xl border-2 transition-all text-left ${
-                      selectedTable?.id === table.id
+                    onClick={() => setSelectedTableId(table.id)}
+                    className={`p-4 rounded-xl border-2 transition-all text-left min-w-0 ${
+                      selectedTableId === table.id
                         ? 'border-primary bg-primary/5'
                         : 'border-transparent hover:bg-white/50'
                     }`}
                   >
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <p className="font-bold text-lg">Table {table.tableNumber}</p>
+                    <div className="flex items-start justify-between gap-2 min-w-0">
+                      <div className="min-w-0">
+                        <p className="font-bold text-lg truncate">Table {table.tableNumber}</p>
                         <p className="text-xs text-on-surface-variant">Capacity: {table.capacity}</p>
                       </div>
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(table.status)}`}>
+                      <span className={`shrink-0 px-2 py-1 rounded-full text-xs font-medium border ${getStatusColor(table.status)}`}>
                         <span className="flex items-center gap-1">
                           <span className="material-symbols-outlined text-sm">{getStatusIcon(table.status)}</span>
                           {table.status}
                         </span>
                       </span>
                     </div>
+                    {/* FIX 6: Guard currentOrderId before rendering */}
                     {table.currentOrderId && (
                       <div className="mt-2 pt-2 border-t border-outline-variant">
-                        <p className="text-xs text-on-surface-variant">
-                          Order: <span className="font-mono text-primary">{table.currentOrderId.slice(0, 8)}</span>
+                        <p className="text-xs text-on-surface-variant truncate">
+                          Order:{' '}
+                          <span className="font-mono text-primary">
+                            {table.currentOrderId.slice(0, 8)}
+                          </span>
                         </p>
                       </div>
                     )}
@@ -271,21 +326,23 @@ function CashierContent() {
                 ))}
               </div>
 
-              {tables.length === 0 && (
+              {tablesWithOptimistic.length === 0 && (
                 <div className="text-center py-8">
-                  <span className="material-symbols-outlined text-on-surface-variant text-4xl mb-2">table_restaurant</span>
+                  <span className="material-symbols-outlined text-on-surface-variant text-4xl mb-2">
+                    table_restaurant
+                  </span>
                   <p className="text-on-surface-variant">No tables configured</p>
                   <p className="text-sm text-outline mt-1">Add tables in the admin panel</p>
                 </div>
               )}
 
-              {/* Selected Table Actions */}
+              {/* Selected Table Actions — derived from live data, never stale */}
               {selectedTable && (
                 <div className="bg-white rounded-xl p-4 border border-surface-container-low">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="font-semibold">Table {selectedTable.tableNumber}</h3>
                     <button
-                      onClick={() => setSelectedTable(null)}
+                      onClick={() => setSelectedTableId(null)}
                       className="text-on-surface-variant hover:text-on-surface"
                     >
                       <span className="material-symbols-outlined">close</span>
@@ -300,31 +357,34 @@ function CashierContent() {
                     </div>
                     <div className="flex items-center justify-between text-sm mt-1">
                       <span className="text-on-surface-variant">QR Code</span>
-                      <span className="font-mono text-xs">{selectedTable.qrCode}</span>
+                      <span className="font-mono text-xs truncate max-w-[140px]">
+                        {selectedTable.qrCode}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Active Orders for this Table */}
-                  {selectedTable.currentOrderId && (
-                    <div className="mb-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
-                      <p className="text-sm font-semibold text-amber-800 mb-2">Active Order</p>
-                      {(() => {
-                        const order = getOrderById(selectedTable.currentOrderId!)
-                        return order ? (
+                  {/* Active Orders for this Table — FIX 6: safe optional access */}
+                  {selectedTable.currentOrderId && (() => {
+                    const order = getOrderById(selectedTable.currentOrderId)
+                    return (
+                      <div className="mb-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                        <p className="text-sm font-semibold text-amber-800 mb-2">Active Order</p>
+                        {order ? (
                           <div className="space-y-1">
                             <p className="text-xs text-amber-700">
-                              <span className="font-mono">{order.id.slice(0, 8)}</span> • {order.status}
+                              <span className="font-mono">{order.id.slice(0, 8)}</span>
+                              {' '}• {order.status}
                             </p>
                             <p className="text-xs text-amber-600">
                               {order.items.length} items • ${order.total.toFixed(2)}
                             </p>
                           </div>
                         ) : (
-                          <p className="text-xs text-amber-600">Loading order...</p>
-                        )
-                      })()}
-                    </div>
-                  )}
+                          <p className="text-xs text-amber-600">Loading order…</p>
+                        )}
+                      </div>
+                    )
+                  })()}
 
                   <div className="space-y-2">
                     {selectedTable.status === 'available' && (

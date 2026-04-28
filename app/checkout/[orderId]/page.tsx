@@ -118,7 +118,7 @@ export default function CheckoutPage() {
                     <h3 className="font-semibold text-zinc-900">{item.quantity}x {item.name}</h3>
                     <span className="font-semibold text-primary">₱{(item.price * item.quantity).toFixed(2)}</span>
                   </div>
-                  {item.notes && <p className="text-zinc-500 text-xs mt-1">"{item.notes}"</p>}
+                  {item.notes && <p className="text-zinc-500 text-xs mt-1">&ldquo;{item.notes}&rdquo;</p>}
                 </div>
               </div>
             ))}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useCart, Transaction } from '@/app/cashier/context/CartContext'
+import { Transaction } from '@/app/cashier/context/CartContext'
 
 interface TransactionHistoryProps {
   transactions: Transaction[]

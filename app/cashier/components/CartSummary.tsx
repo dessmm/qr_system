@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { useCart, CartItem as CartItemType, Transaction } from '@/app/cashier/context/CartContext'
 
 // Default tax rate from settings
@@ -12,7 +12,7 @@ interface CartSummaryProps {
 }
 
 export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete }: CartSummaryProps) {
-  const { items, getSubtotal, getTax, getTotal, clearCart, customerInfo, setCustomerInfo } = useCart()
+  const { items, getSubtotal, getTax, getTotal, clearCart, customerInfo } = useCart()
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'digital'>('cash')
   const [paymentReceived, setPaymentReceived] = useState('')
   const [showReceipt, setShowReceipt] = useState(false)
@@ -25,7 +25,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete }: CartSumm
   const payment = parseFloat(paymentReceived) || 0
   const change = payment - total
 
-  const handleCheckout = () => {
+  const handleCheckout = useCallback(() => {
     if (payment < total) return
 
     const transaction: Transaction = {
@@ -45,7 +45,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete }: CartSumm
     setLastTransaction(transaction)
     setShowReceipt(true)
     onComplete?.(transaction)
-  }
+  }, [payment, total, items, subtotal, tax, discount, customerInfo, paymentMethod, onComplete])
 
   const handleNewTransaction = () => {
     setShowReceipt(false)

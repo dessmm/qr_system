@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { listenToOrders, listenToSettings, updateOrderStatus, Order, OrderStatus, AppSettings, DEFAULT_SETTINGS } from '@/lib/data'
 
