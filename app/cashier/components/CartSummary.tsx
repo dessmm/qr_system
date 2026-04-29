@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useCart, CartItem as CartItemType, Transaction } from '@/app/cashier/context/CartContext'
+import { Table, TableStatus, addOrder, updateTableStatus } from '@/lib/data'
 
 // Default tax rate — override via prop from settings
 const DEFAULT_TAX_RATE = 8
@@ -12,9 +13,12 @@ const QUICK_AMOUNTS = [100, 200, 500, 1000]
 interface CartSummaryProps {
   taxRate?: number
   onComplete?: (transaction: Transaction) => void
+  tables?: Table[]
+  selectedTableId?: string | null
+  onTableSelect?: (tableId: string | null) => void
 }
 
-export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete }: CartSummaryProps) {
+export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [], selectedTableId, onTableSelect }: CartSummaryProps) {
   const { items, getSubtotal, getTax, getTotal, clearCart, customerInfo } = useCart()
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'digital'>('cash')
   const [paymentReceived, setPaymentReceived] = useState('')
@@ -81,10 +85,17 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete }: CartSumm
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentMethod, isDisabled, payment, total])
 
-  const handleCheckout = useCallback(() => {
+  const handleCheckout = useCallback(async () => {
     // Fix #3: card/digital bypass cash validation; cash must have sufficient funds
     if (cartEmpty) return
     if (paymentMethod === 'cash' && payment < total) return
+    if (!selectedTableId) {
+      alert('Please select a table before checkout')
+      return
+    }
+
+    const selectedTable = tables.find(t => t.id === selectedTableId)
+    if (!selectedTable) return
 
     const effectivePayment = paymentMethod === 'cash' ? payment : total
     const transaction: Transaction = {
@@ -101,16 +112,47 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete }: CartSumm
       paymentMethod
     }
 
-    setLastTransaction(transaction)
-    setShowReceipt(true)
-    onComplete?.(transaction)
-  }, [cartEmpty, payment, total, items, subtotal, tax, discount, customerInfo, paymentMethod, change, onComplete])
+    try {
+      // Create the order with the selected table
+      const orderId = await addOrder({
+        tableNumber: selectedTable.tableNumber,
+        items: items.map(i => ({
+          id: i.id,
+          name: i.name,
+          price: i.price,
+          quantity: i.quantity,
+          image: i.image || '',
+          ...(i.notes && { notes: i.notes })
+        })),
+        status: 'new',
+        total,
+        orderType: 'dine-in',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      })
+
+      // Mark the table as occupied with the order ID
+      if (orderId) {
+        await updateTableStatus(selectedTableId, 'occupied', orderId)
+      }
+
+      setLastTransaction(transaction)
+      setShowReceipt(true)
+      onComplete?.(transaction)
+      clearCart()
+    } catch (err) {
+      console.error('Checkout error:', err)
+      alert('Checkout failed. Please try again.')
+    }
+  }, [cartEmpty, payment, total, items, subtotal, tax, discount, customerInfo, paymentMethod, change, onComplete, selectedTableId, tables, clearCart])
+
 
   const handleNewTransaction = () => {
     setShowReceipt(false)
     setLastTransaction(null)
     setPaymentReceived('')
     clearCart()
+    onTableSelect?.(null)
   }
 
   // ── Empty cart state ────────────────────────────────────────────────────────
@@ -233,6 +275,26 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete }: CartSumm
 
       {/* Payment Section */}
       <div className="p-4 border-t border-surface-container-low space-y-3">
+        {/* Table Selection */}
+        <div>
+          <label className="text-sm font-medium text-on-surface-variant block mb-2">Assign to Table</label>
+          <select
+            value={selectedTableId || ''}
+            onChange={e => onTableSelect?.(e.target.value || null)}
+            className="w-full px-4 py-3 bg-surface-container-low rounded-xl border border-surface-container-high focus:border-primary focus:outline-none text-sm"
+          >
+            <option value="">-- Select a table --</option>
+            {tables.map(table => (
+              <option key={table.id} value={table.id}>
+                Table {table.tableNumber} - {table.name} ({table.status})
+              </option>
+            ))}
+          </select>
+          {selectedTableId && (
+            <p className="text-xs text-primary mt-1">✓ Table selected</p>
+          )}
+        </div>
+
         {/* Payment Method */}
         <div>
           <label className="text-sm font-medium text-on-surface-variant block mb-2">Payment Method</label>

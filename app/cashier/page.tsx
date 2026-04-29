@@ -381,7 +381,12 @@ function CashierContent() {
 
           {/* Content */}
           {activeTab === 'cart' ? (
-            <CartSummary onComplete={handleTransactionComplete} />
+            <CartSummary
+              onComplete={handleTransactionComplete}
+              tables={tablesWithOptimistic}
+              selectedTableId={selectedTableId}
+              onTableSelect={setSelectedTableId}
+            />
           ) : activeTab === 'tables' ? (
             <div className="space-y-4">
               {/* Table Stats */}

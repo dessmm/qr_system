@@ -22,6 +22,7 @@ export interface AppSettings {
   taxRate: string;
   serviceFee: string;
   baseUrl?: string;
+  imgbbApiKey?: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -29,7 +30,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   stationName: 'Main Line',
   taxRate: '8',
   serviceFee: '2.50',
-  baseUrl: ''
+  baseUrl: '',
+  imgbbApiKey: ''
 }
 
 // Firestore collection names
@@ -182,6 +184,21 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
   console.log("Settings successfully saved!");
 }
 
+export function listenToSettings(callback: (settings: AppSettings) => void) {
+  const docRef = doc(db, SETTINGS_COL, 'general');
+  return onSnapshot(docRef, 
+    (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as AppSettings;
+        callback({ ...DEFAULT_SETTINGS, ...data });
+      } else {
+        callback(DEFAULT_SETTINGS);
+      }
+    },
+    (error) => console.error('[listenToSettings] Firestore error:', error)
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MENU ITEMS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -191,14 +208,14 @@ export interface MenuItem {
   name: string
   description: string
   price: number
-  category: 'Appetizers' | 'Mains' | 'Drinks' | 'Desserts' | 'Sides'
+  category: 'Appetizers' | 'Mains' | 'Drinks' | 'Desserts' | 'Sides' | 'Snacks'
   image: string
   badge?: string
   tags?: string[]
   available: boolean
 }
 
-export const CATEGORIES = ['Appetizers', 'Mains', 'Drinks', 'Desserts', 'Sides'] as const
+export const CATEGORIES = ['Appetizers', 'Mains', 'Drinks', 'Desserts', 'Sides', 'Snacks'] as const
 
 export async function getMenuItems(): Promise<MenuItem[]> {
   try {
@@ -320,23 +337,6 @@ export function listenToMenu(callback: (items: MenuItem[]) => void) {
       callback(items);
     },
     (error) => console.error('[listenToMenu] Firestore error — check security rules:', error)
-  );
-}
-
-export function listenToSettings(callback: (settings: AppSettings) => void) {
-  return onSnapshot(
-    doc(db, SETTINGS_COL, 'general'),
-    (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as AppSettings;
-        console.log('Received settings update from Firestore:', data);
-        callback(data);
-      } else {
-        console.log('Settings document does not exist — using defaults.');
-        callback(DEFAULT_SETTINGS);
-      }
-    },
-    (error) => console.error('[listenToSettings] Firestore error — check security rules:', error)
   );
 }
 
