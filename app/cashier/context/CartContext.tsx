@@ -5,11 +5,14 @@ import { createContext, useContext, useState, useCallback, ReactNode } from 'rea
 // Types
 export interface CartItem {
   id: string
+  baseId?: string
   name: string
   price: number
   quantity: number
   image?: string
   category?: string
+  variantName?: string
+  notes?: string
 }
 
 export interface CustomerInfo {

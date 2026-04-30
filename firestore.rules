@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow anyone to read menu items and settings
+    match /menu/{item} {
+      allow read: if true;
+    }
+
+    match /settings/{setting} {
+      allow read: if true;
+    }
+
+    // Allow anyone to read tables (for QR code access)
+    match /tables/{table} {
+      allow read: if true;
+      // Only allow authenticated admins to write tables
+      allow write: if request.auth != null && request.auth.token.admin == true;
+    }
+
+    // Allow anyone to create and read orders (for customer ordering)
+    match /orders/{order} {
+      allow read: if true;
+      allow create: if true;
+      // Only allow authenticated users to update orders
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null && request.auth.token.admin == true;
+    }
+  }
+}

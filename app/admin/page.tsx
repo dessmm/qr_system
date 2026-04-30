@@ -71,20 +71,26 @@ const TAG_CARD_STYLES: Record<MenuItemTag, string> = {
   vegan:      'bg-emerald-100 text-emerald-800',
 }
 
-// ─── ImgBB Upload Helper ─────────────────────────────────────────────────────────
-async function uploadToImgBB(file: File, apiKey: string): Promise<string> {
-  if (!apiKey) throw new Error('ImgBB API key is not configured. Please add it in System Settings.')
+// ─── Cloudinary Upload Helper ───────────────────────────────────────────────────
+async function uploadToCloudinary(file: File, cloudName: string, uploadPreset?: string): Promise<string> {
+  if (!cloudName) throw new Error('Cloudinary cloud name is not configured. Please add it in System Settings.')
+  if (!uploadPreset) throw new Error('Cloudinary upload preset is required for unsigned browser uploads. Create a preset in Cloudinary and enter its name in System Settings.')
+  const endpoint = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`
   const formData = new FormData()
-  formData.append('image', file)
-  const res = await fetch(`https://api.imgbb.com/1/upload?key=${apiKey}`, { method: 'POST', body: formData })
+  formData.append('file', file)
+  formData.append('upload_preset', uploadPreset)
+  const res = await fetch(endpoint, { method: 'POST', body: formData })
   if (!res.ok) {
     const err = await res.json().catch(() => ({}))
-    throw new Error(err?.error?.message ?? `ImgBB upload failed (HTTP ${res.status})`)
+    throw new Error(err?.error?.message ?? `Cloudinary upload failed (HTTP ${res.status})`)
   }
   const data = await res.json()
-  const imageUrl = data?.data?.image?.url || data?.data?.display_url || data?.data?.url || data?.data?.image?.thumb?.url
+  const imageUrl =
+    data?.secure_url ||
+    data?.url ||
+    (data?.public_id ? `https://res.cloudinary.com/${cloudName}/image/upload/${data.public_id}` : undefined)
   if (!imageUrl || typeof imageUrl !== 'string') {
-    throw new Error('ImgBB returned an unexpected response. Unable to determine uploaded image URL.')
+    throw new Error('Cloudinary returned an unexpected response. Unable to determine uploaded image URL.')
   }
   return imageUrl
 }
@@ -115,36 +121,60 @@ function SettingsView({ initialSettings }: { initialSettings: AppSettings }) {
         {[
           { label: 'Restaurant Name', key: 'restaurantName', type: 'text' },
           { label: 'Station Name',    key: 'stationName',    type: 'text' },
-          { label: 'Tax Rate (%)',    key: 'taxRate',        type: 'number' },
-          { label: 'Service Fee (₱)', key: 'serviceFee',    type: 'number' },
+          { label: 'Tax Rate (%)',    key: 'taxRate',        type: 'text' },
+          { label: 'Service Fee (₱)', key: 'serviceFee',    type: 'text' },
         ].map(({ label, key, type }) => (
           <div key={key} className="bg-white rounded-xl p-5 border border-zinc-100 shadow-sm">
             <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">{label}</label>
             <input
               type={type}
-              value={String(settings[key as keyof AppSettings] ?? '')}
-              onChange={e => setSettings({
-                ...settings,
-                [key]: type === 'number' ? parseFloat(e.target.value) || 0 : e.target.value,
-              } as AppSettings)}
+              value={(settings as Record<string, string>)[key] ?? ''}
+              onChange={e => setSettings({ ...settings, [key]: e.target.value })}
               className="w-full bg-zinc-50 border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 font-medium focus:ring-2 focus:ring-primary outline-none text-sm"
             />
           </div>
         ))}
 
         <div className="bg-white rounded-xl p-5 border border-zinc-100 shadow-sm">
-          <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">ImgBB API Key</label>
+          <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Cloudinary Cloud Name</label>
           <input
-            type="password"
-            value={settings.imgbbApiKey || ''}
-            onChange={e => setSettings({ ...settings, imgbbApiKey: e.target.value })}
+            type="text"
+            value={settings.cloudinaryCloudName || settings.imgbbApiKey || ''}
+            onChange={e => setSettings({ ...settings, cloudinaryCloudName: e.target.value })}
             className="w-full bg-zinc-50 border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 font-medium focus:ring-2 focus:ring-primary outline-none text-sm"
-            placeholder="Enter your ImgBB API key (optional)"
+            placeholder="225392223786975"
           />
           <p className="text-[10px] text-zinc-500 mt-2">
-            Get a free API key at{' '}
-            <a href="https://api.imgbb.com" target="_blank" rel="noreferrer" className="underline">api.imgbb.com</a>
-            {' '}for image uploads. Can also use NEXT_PUBLIC_IMGBB_API_KEY in .env.local.
+            Your Cloudinary cloud name is part of the image URL, for example:{' '}
+            <code className="font-mono">https://res.cloudinary.com/225392223786975/image/upload/menu1.jpg</code>
+          </p>
+        </div>
+
+        <div className="bg-white rounded-xl p-5 border border-zinc-100 shadow-sm">
+          <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Cloudinary Upload Preset</label>
+          <input
+            type="text"
+            value={settings.cloudinaryUploadPreset || ''}
+            onChange={e => setSettings({ ...settings, cloudinaryUploadPreset: e.target.value })}
+            className="w-full bg-zinc-50 border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 font-medium focus:ring-2 focus:ring-primary outline-none text-sm"
+            placeholder="e.g. menu_upload"
+          />
+          <p className="text-[10px] text-zinc-500 mt-2">
+            Required for unsigned direct browser uploads. Create an unsigned preset in Cloudinary and enter its name here.
+          </p>
+        </div>
+
+        <div className="bg-white rounded-xl p-5 border border-zinc-100 shadow-sm">
+          <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-2">Cloudinary API Key</label>
+          <input
+            type="password"
+            value={settings.cloudinaryApiKey || ''}
+            onChange={e => setSettings({ ...settings, cloudinaryApiKey: e.target.value })}
+            className="w-full bg-zinc-50 border border-zinc-200 rounded-lg px-4 py-2 text-zinc-900 font-medium focus:ring-2 focus:ring-primary outline-none text-sm"
+            placeholder="Optional: Cloudinary API Key"
+          />
+          <p className="text-[10px] text-zinc-500 mt-2">
+            Optional. If you want to keep your Cloudinary config in environment variables, use NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET.
           </p>
         </div>
 
@@ -311,25 +341,40 @@ export default function AdminPage() {
       return
     }
     if (file.size > 32 * 1024 * 1024) {
-      setImageUploadMsg('File too large — ImgBB supports up to 32 MB.')
+      setImageUploadMsg('File too large — Cloudinary supports up to 32 MB.')
       setImageUploadStatus('error')
       return
     }
+
+    // Show blob URL as instant preview — do NOT revoke until permanent URL is painted
     const blobUrl = URL.createObjectURL(file)
     setEditingItem(prev => prev ? { ...prev, image: blobUrl } : null)
     setImageUploadStatus('uploading')
-    setImageUploadMsg('Uploading to ImgBB…')
+    setImageUploadMsg('Uploading to Cloudinary…')
+
     try {
-      const apiKey = settings.imgbbApiKey || process.env.NEXT_PUBLIC_IMGBB_API_KEY || ''
-      const permanentUrl = await uploadToImgBB(file, apiKey)
-      URL.revokeObjectURL(blobUrl)
-      setEditingItem(prev => prev ? { ...prev, image: permanentUrl } : null)
+      const cloudName = settings.cloudinaryCloudName || settings.imgbbApiKey || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || process.env.NEXT_PUBLIC_IMGBB_API_KEY || ''
+      const uploadPreset = settings.cloudinaryUploadPreset || process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || ''
+      const permanentUrl = await uploadToCloudinary(file, cloudName, uploadPreset)
+
+      // Set permanent URL first — React will batch this state update and paint it
+      // before we revoke the blob, so there's no blank frame
+      setEditingItem(prev => {
+        // Only update if we're still editing the same item (or a new one)
+        if (!prev) return null
+        return { ...prev, image: permanentUrl }
+      })
       setImageUploadStatus('done')
-      setImageUploadMsg('Uploaded successfully via ImgBB ✓')
+      setImageUploadMsg('Uploaded successfully via Cloudinary ✓')
+
+      // Revoke the blob URL after a short delay to ensure React has painted
+      // the permanent URL before the browser discards the blob
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 2000)
     } catch (err: unknown) {
       const error = err as Error
       setImageUploadStatus('error')
-      setImageUploadMsg(`ImgBB upload failed: ${error.message}`)
+      setImageUploadMsg(`Cloudinary upload failed: ${error.message}`)
+      // On failure keep the blob URL visible as preview — don't revoke
     }
   }
 
@@ -588,7 +633,11 @@ export default function AdminPage() {
                             src={item.image}
                             alt={item.name}
                             className={`w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 ${!item.available ? 'grayscale' : ''}`}
-                            onError={e => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400' }}
+                            onError={e => {
+                              const target = e.target as HTMLImageElement
+                              const FALLBACK = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400'
+                              if (target.src !== FALLBACK) target.src = FALLBACK
+                            }}
                           />
                           <div className="absolute top-3 left-3 flex gap-1 flex-wrap max-w-[80%]">
                             <span className="bg-white/90 backdrop-blur px-2.5 py-1 rounded-full text-[9px] font-bold text-primary shadow-sm uppercase tracking-wider">
@@ -957,10 +1006,15 @@ export default function AdminPage() {
                   {editingItem.image && (
                     <div className="mb-3 relative w-full h-32 rounded-xl overflow-hidden border border-zinc-200 bg-zinc-50">
                       <img
+                        key={editingItem.image}
                         src={editingItem.image}
                         alt="Preview"
                         className="w-full h-full object-cover"
-                        onError={e => { (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400' }}
+                        onError={e => {
+                          const target = e.target as HTMLImageElement
+                          const FALLBACK = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400'
+                          if (target.src !== FALLBACK) target.src = FALLBACK
+                        }}
                       />
                       {imageUploadStatus === 'uploading' && (
                         <div className="absolute inset-0 bg-black/50 flex items-center justify-center gap-2 text-white text-xs font-bold">
@@ -980,11 +1034,17 @@ export default function AdminPage() {
                     </p>
                   )}
 
-                  {!(settings.imgbbApiKey || process.env.NEXT_PUBLIC_IMGBB_API_KEY) && (
+                  {!(settings.cloudinaryCloudName || process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME) && (
                     <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
                       <p className="text-[11px] text-amber-700 font-semibold">
-                        ⚠️ ImgBB API key not found. Get a free key at{' '}
-                        <a href="https://api.imgbb.com" target="_blank" rel="noreferrer" className="underline">api.imgbb.com</a>
+                        ⚠️ Cloudinary cloud name not found. Enter it in System Settings or set NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME.
+                      </p>
+                    </div>
+                  )}
+                  {settings.cloudinaryCloudName && !settings.cloudinaryUploadPreset && !process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET && (
+                    <div className="mb-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                      <p className="text-[11px] text-red-700 font-semibold">
+                        ⚠️ Upload preset required for unsigned uploads. Create an unsigned preset in Cloudinary and enter its name here.
                       </p>
                     </div>
                   )}

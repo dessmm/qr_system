@@ -13,11 +13,16 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
   const { addItem } = useCart()
   const [imgError, setImgError] = useState(false)
   const [added, setAdded] = useState(false)
+  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0)
   // Debounce guard — tracks the last add timestamp per card instance
   const lastAddedAt = useRef(0)
 
+  const variants = product.variants ?? []
+  const selectedVariant = variants[selectedVariantIndex]
+  const displayPrice = selectedVariant?.price ?? product.price
+
   // Fix #8: treat zero-price items as unavailable
-  const isUnavailable = !product.available || product.price === 0
+  const isUnavailable = !product.available || displayPrice === 0
 
   // Fix #5: debounced add with 500ms guard, 800ms feedback badge
   const handleAdd = useCallback(() => {
@@ -27,11 +32,13 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
     lastAddedAt.current = now
 
     addItem({
-      id: product.id,
+      id: selectedVariant?.name ? `${product.id}::${selectedVariant.name}` : product.id,
+      baseId: product.id,
       name: product.name,
-      price: product.price,
+      price: displayPrice,
       image: product.image,
       category: product.category,
+      variantName: selectedVariant?.name,
     })
 
     // Show "Added" badge for 800ms
@@ -40,7 +47,7 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
 
     // Pulse the nav cart icon if parent passed the callback
     onCartPulse?.()
-  }, [isUnavailable, addItem, product, onCartPulse])
+  }, [isUnavailable, addItem, product, displayPrice, selectedVariant, onCartPulse])
 
   // Fix #4: derive initials from product name for placeholder
   const initials = product.name
@@ -97,10 +104,29 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
       <div className="space-y-1">
         <h3 className="font-semibold text-on-surface text-sm truncate">{product.name}</h3>
         <p className="text-xs text-on-surface-variant line-clamp-2 h-8">{product.description}</p>
+        {variants.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {variants.map((variant, idx) => (
+              <div
+                key={variant.name}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setSelectedVariantIndex(idx)
+                }}
+                className={`px-2 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                  selectedVariantIndex === idx
+                    ? 'bg-primary text-white'
+                    : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high'
+                }`}
+              >
+                {variant.name}
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex items-center justify-between mt-2">
           <span className="text-primary font-bold text-lg">
-            {/* Currency changed to Philippine Peso */}
-            ₱{product.price.toFixed(2)}
+            ₱{displayPrice.toFixed(2)}
           </span>
           <span className="material-symbols-outlined text-primary opacity-0 group-hover:opacity-100 transition-opacity">
             add_shopping_cart

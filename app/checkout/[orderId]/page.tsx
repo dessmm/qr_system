@@ -13,6 +13,7 @@ export default function CheckoutPage() {
   const [order, setOrder] = useState<Order | null>(null)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [tipPercent, setTipPercent] = useState<number>(18)
+  const [paymentMethod, setPaymentMethod] = useState<'qrph' | 'card' | 'cash'>('qrph')
   const [isProcessing, setIsProcessing] = useState(false)
   const [isLoading, setIsLoading] = useState(true) // BUG-04: Added loading state
 
@@ -64,11 +65,15 @@ export default function CheckoutPage() {
     try {
       // TODO: Integrate real payment gateway here
       await new Promise(r => setTimeout(r, 1500))
-      // BUG-08: Mark order as in-progress so kitchen knows it's confirmed
-      await updateOrderStatus(orderId, 'in-progress')
+      // Only update kitchen status if this order has not already been served.
+      // A served order means food was delivered, but the table stays occupied
+      // until payment is confirmed. Clearing the table is handled below.
+      if (order?.status && order.status !== 'served') {
+        await updateOrderStatus(orderId, 'in-progress')
+      }
+
       // Clear table after payment is completed
       if (order?.tableNumber) {
-        // Find the table by table number and clear it
         const { getTables } = await import('@/lib/data')
         const tables = await getTables()
         const table = tables.find(t => t.tableNumber === order.tableNumber)
@@ -165,24 +170,36 @@ export default function CheckoutPage() {
         </section>
 
         {/* Payment Methods */}
-        <section className="space-y-4">
-          <h2 className="text-sm font-semibold text-zinc-900 px-1 uppercase tracking-wider">Payment Method</h2>
-          
-          <button className="w-full h-14 bg-black text-white rounded-full flex items-center justify-center gap-2 active:scale-95 transition-transform duration-200">
-            <span className="text-lg">Pay with</span>
-            <svg className="h-5" fill="currentColor" viewBox="0 0 100 100">
-              <path d="M78.8 63.8c-2.4 4.1-5 8.1-9 8.2-3.8.1-5-2.2-9.3-2.1-4.3.1-5.7 2.2-9.2 2.1-3.6-.1-6.9-4.7-9.3-8.8-4.9-8.4-3.7-22 1.3-30.7 2.5-4.3 6.9-7 11.6-7.1 3.5-.1 6.9 2.4 9 2.4 2.2 0 6.2-3 10.4-2.5 1.7.1 6.6.7 9.8 5.3-1.4.8-5.6 3.1-5.6 10s4.9 9.3 6.4 10.1c-.2.9-1.2 3.1-2.1 4.7zm-14.7-36.9c1.9-2.3 3.1-5.5 2.7-8.6-2.7.1-5.9 1.8-7.9 4.1-1.7 1.9-3.2 5.2-2.8 8.2 3 .2 6-1.3 8-3.7z"></path>
-            </svg>
-            <span className="font-bold text-lg">Pay</span>
-          </button>
-          
-          <button className="w-full h-14 bg-white border border-stone-200 rounded-full flex items-center justify-between px-6 active:scale-95 transition-transform duration-200 hover:bg-stone-50 shadow-sm">
-            <div className="flex items-center gap-3">
-              <span className="material-symbols-outlined text-zinc-500">credit_card</span>
-              <span className="font-semibold text-zinc-900">Pay with Card</span>
-            </div>
-            <span className="material-symbols-outlined text-zinc-400">chevron_right</span>
-          </button>
+        <section className="bg-white rounded-xl p-6 shadow-sm border border-stone-100">
+          <h2 className="text-sm font-semibold text-zinc-900 mb-4 uppercase tracking-wider">Payment Method</h2>
+          <div className="space-y-3">
+            {[
+              { key: 'qrph', label: 'QR PH', description: 'Scan our QR PH code to pay instantly with your banking app.', icon: 'qr_code_scanner' },
+              { key: 'card', label: 'Card', description: 'Pay securely with credit or debit card.', icon: 'credit_card' },
+              { key: 'cash', label: 'Cash (Pay when served)', description: 'Settle your bill in cash when your order is served.', icon: 'payments' },
+            ].map((method) => (
+              <button
+                key={method.key}
+                type="button"
+                onClick={() => setPaymentMethod(method.key as 'qrph' | 'card' | 'cash')}
+                className={`w-full text-left rounded-3xl border px-4 py-4 flex items-center justify-between transition ${paymentMethod === method.key ? 'border-primary bg-primary/10 shadow-sm' : 'border-stone-200 bg-white hover:border-stone-300'}`}
+              >
+                <div className="flex items-center gap-4">
+                  <span className="material-symbols-outlined text-2xl text-zinc-700">{method.icon}</span>
+                  <div>
+                    <div className={`font-semibold ${paymentMethod === method.key ? 'text-primary' : 'text-zinc-900'}`}>{method.label}</div>
+                    <p className="text-xs text-zinc-500 mt-1">{method.description}</p>
+                  </div>
+                </div>
+                <span className={`material-symbols-outlined text-lg ${paymentMethod === method.key ? 'text-primary' : 'text-zinc-300'}`}>check_circle</span>
+              </button>
+            ))}
+          </div>
+          <div className="rounded-3xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-zinc-600 mt-4">
+            {paymentMethod === 'qrph' && 'Scan the restaurant QR PH code and confirm payment in your mobile banking app.'}
+            {paymentMethod === 'card' && 'Card payments are processed securely. Enter your card details at the next step.'}
+            {paymentMethod === 'cash' && 'Pay in cash when your server brings your order. This confirms your order and keeps the table occupied until checkout.'}
+          </div>
         </section>
 
         {/* Secure Badge */}
@@ -200,7 +217,9 @@ export default function CheckoutPage() {
               <span className="text-sm font-semibold text-zinc-500 uppercase tracking-wide">Total Amount</span>
               <div className="text-3xl font-black text-primary">₱{grandTotal.toFixed(2)}</div>
             </div>
-            <span className="text-zinc-400 text-sm mb-1 italic">Tip included</span>
+            <span className="text-zinc-400 text-sm mb-1 italic">
+              {paymentMethod === 'cash' ? 'Cash due when served' : paymentMethod === 'qrph' ? 'QR PH payment selected' : 'Card payment selected'}
+            </span>
           </div>
           <button 
             onClick={handlePay}
@@ -214,7 +233,7 @@ export default function CheckoutPage() {
               </>
             ) : (
               <>
-                <span>Pay Now</span>
+                <span>{paymentMethod === 'qrph' ? 'Pay with QR PH' : paymentMethod === 'card' ? 'Pay with Card' : 'Confirm Cash Payment'}</span>
                 <span className="material-symbols-outlined">arrow_forward</span>
               </>
             )}

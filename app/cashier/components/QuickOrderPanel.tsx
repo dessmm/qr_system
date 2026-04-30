@@ -121,6 +121,9 @@ export function QuickOrderPanel({ open, onClose, tables }: QuickOrderPanelProps)
                   {/* Name & price */}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-on-surface truncate">{item.name}</p>
+                    {item.variantName && (
+                      <p className="text-[11px] text-on-surface-variant truncate">{item.variantName}</p>
+                    )}
                     <p className="text-xs text-primary font-semibold">₱{item.price.toFixed(2)}</p>
                   </div>
 

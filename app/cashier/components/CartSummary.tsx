@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useCart, CartItem as CartItemType, Transaction } from '@/app/cashier/context/CartContext'
-import { Table, TableStatus, addOrder, updateTableStatus } from '@/lib/data'
+import { Table, addOrder, updateTableStatus } from '@/lib/data'
 
 // Default tax rate — override via prop from settings
 const DEFAULT_TAX_RATE = 8
@@ -48,42 +48,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
     ? 'Cash received is less than the total'
     : ''
 
-  // Fix #9: keyboard shortcut ref — only active when cash is selected
   const cartPanelRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (paymentMethod !== 'cash') return // remove bindings for non-cash
-
-    const handler = (e: KeyboardEvent) => {
-      // Only fire if focus is inside cart panel or on the body (global fallback)
-      const target = e.target as HTMLElement
-      const inPanel = cartPanelRef.current?.contains(target) ?? false
-      const isBody = target === document.body || target.tagName === 'DIV'
-      if (!inPanel && !isBody) return
-
-      // Don't override normal typing inside inputs (except Escape)
-      if (target.tagName === 'INPUT' && e.key !== 'Escape' && e.key !== 'Enter') return
-
-      switch (e.key) {
-        case '1': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[0])); break
-        case '2': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[1])); break
-        case '3': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[2])); break
-        case '4': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[3])); break
-        case 'Enter':
-          e.preventDefault()
-          if (!isDisabled) handleCheckout()
-          break
-        case 'Escape':
-          e.preventDefault()
-          setPaymentReceived('')
-          break
-      }
-    }
-
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paymentMethod, isDisabled, payment, total])
 
   const handleCheckout = useCallback(async () => {
     // Fix #3: card/digital bypass cash validation; cash must have sufficient funds
@@ -122,6 +87,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
           price: i.price,
           quantity: i.quantity,
           image: i.image || '',
+          ...(i.variantName && { variantName: i.variantName }),
           ...(i.notes && { notes: i.notes })
         })),
         status: 'new',
@@ -145,6 +111,41 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
       alert('Checkout failed. Please try again.')
     }
   }, [cartEmpty, payment, total, items, subtotal, tax, discount, customerInfo, paymentMethod, change, onComplete, selectedTableId, tables, clearCart])
+
+  // Fix #9: keyboard shortcut ref — only active when cash is selected
+  useEffect(() => {
+    if (paymentMethod !== 'cash') return // remove bindings for non-cash
+
+    const handler = (e: KeyboardEvent) => {
+      // Only fire if focus is inside cart panel or on the body (global fallback)
+      const target = e.target as HTMLElement
+      const inPanel = cartPanelRef.current?.contains(target) ?? false
+      const isBody = target === document.body || target.tagName === 'DIV'
+      if (!inPanel && !isBody) return
+
+      // Don't override normal typing inside inputs (except Escape)
+      if (target.tagName === 'INPUT' && e.key !== 'Escape' && e.key !== 'Enter') return
+
+      switch (e.key) {
+        case '1': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[0])); break
+        case '2': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[1])); break
+        case '3': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[2])); break
+        case '4': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[3])); break
+        case 'Enter':
+          e.preventDefault()
+          if (!isDisabled) handleCheckout()
+          break
+        case 'Escape':
+          e.preventDefault()
+          setPaymentReceived('')
+          break
+      }
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentMethod, isDisabled, payment, total])
 
 
   const handleNewTransaction = () => {
