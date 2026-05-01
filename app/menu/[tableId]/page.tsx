@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { listenToMenu, listenToSettings, listenToTables, MenuItem, CATEGORIES, CartItem, addOrder, AppSettings, DEFAULT_SETTINGS, Table } from '@/lib/data'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 // ─── Safe image fallback ─────────────────────────────────────────────────────
 const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400'
@@ -121,6 +121,8 @@ export default function MenuPage() {
   const [menuLoading, setMenuLoading]   = useState(true)
   // Store the full table object so we always have tableId ready
   const [table, setTable]               = useState<Table | null>(null)
+  const [orderError, setOrderError]     = useState('')
+  const cartBarRef                      = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const unsubMenu = listenToMenu(items => { setMenuItems(items); setMenuLoading(false) })
@@ -167,6 +169,13 @@ export default function MenuPage() {
     })
   }, [])
 
+  const triggerCartBounce = useCallback(() => {
+    const el = cartBarRef.current
+    if (!el) return
+    el.classList.add('cart-bar-bounce')
+    setTimeout(() => el.classList.remove('cart-bar-bounce'), 350)
+  }, [])
+
   const getCartQty = (id: string, variantName?: string) => {
     const cartItemId = variantName ? `${id}::${variantName}` : id
     return cart.find(c => c.id === cartItemId)?.quantity || 0
@@ -180,6 +189,7 @@ export default function MenuPage() {
   const placeOrder = async () => {
     if (cart.length === 0) return
     setIsPlacing(true)
+    setOrderError('')
     try {
       const orderItems = cart.map(({ id, baseId, name, price, quantity, image, variantName }) => ({
         id,
@@ -214,11 +224,11 @@ export default function MenuPage() {
         router.push(`/checkout/${orderId}`)
       } else {
         setIsPlacing(false)
-        alert('Failed to place order. Please try again.')
+        setOrderError('Failed to place order. Please try again.')
       }
     } catch {
       setIsPlacing(false)
-      alert('Failed to place order. Please try again.')
+      setOrderError('Failed to place order. Please try again.')
     }
   }
 
@@ -250,8 +260,13 @@ export default function MenuPage() {
 
   const filteredItems = menuItems.filter(item => {
     const matchCat    = activeCategory === 'All' || item.category === activeCategory
-    const matchSearch = !searchQuery || item.name.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchCat && matchSearch && item.available !== false
+    const q           = searchQuery.toLowerCase()
+    const matchSearch = !searchQuery ||
+      item.name.toLowerCase().includes(q) ||
+      item.description?.toLowerCase().includes(q) ||
+      item.tags?.some(t => t.toLowerCase().includes(q)) ||
+      item.badge?.toLowerCase().includes(q)
+    return matchCat && matchSearch  // sold-out items are now shown (greyed out)
   })
 
   return (
@@ -312,7 +327,7 @@ export default function MenuPage() {
         .menu-variant-btn { border:0.5px solid rgba(0,0,0,0.1);background:#f7f6f2;color:rgba(0,0,0,0.65);border-radius:10px;padding:6px 10px;font-size:0.72rem;font-weight:600;cursor:pointer;transition:all 0.15s ease; }
         .menu-variant-btn:hover { background:#ecebe4; }
         .menu-variant-btn.active { background:#0a0a0a;color:white;border-color:transparent; }
-        .menu-card-desc { font-size:0.78rem;color:rgba(0,0,0,0.45);line-height:1.5;margin:0; }
+        .menu-card-desc { font-size:0.78rem;color:rgba(0,0,0,0.60);line-height:1.5;margin:0; }
         .menu-card-footer { display:flex;align-items:center;gap:6px; }
         .menu-tag { background:#f0efe9;color:rgba(0,0,0,0.5);font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:3px 8px;border-radius:6px; }
         .menu-card-actions { margin-left:auto;display:flex;align-items:center;gap:8px; }
@@ -399,6 +414,16 @@ export default function MenuPage() {
         @keyframes spin { from{transform:rotate(0deg)}to{transform:rotate(360deg)} }
         .hide-scrollbar { -ms-overflow-style:none;scrollbar-width:none; }
         .hide-scrollbar::-webkit-scrollbar { display:none; }
+        /* Sold-out overlay */
+        .menu-sold-out-overlay { position:absolute;inset:0;background:rgba(0,0,0,0.42);display:flex;align-items:center;justify-content:center;z-index:5; }
+        .menu-sold-out-badge { background:#ef4444;color:white;font-size:0.68rem;font-weight:800;padding:5px 14px;border-radius:6px;letter-spacing:0.1em;transform:rotate(-8deg);border:2px solid white;text-transform:uppercase; }
+        .menu-card.unavailable { opacity:0.72; }
+        /* Category scroll fade mask */
+        .menu-cats-wrap { position:relative; }
+        .menu-cats-wrap::after { content:'';position:absolute;right:0;top:0;bottom:12px;width:44px;background:linear-gradient(to right,transparent,#f5f4f0);pointer-events:none;z-index:2; }
+        /* Cart bar bounce */
+        @keyframes cartBarBounce { 0%{transform:translateX(-50%) scale(1)} 35%{transform:translateX(-50%) scale(1.045)} 100%{transform:translateX(-50%) scale(1)} }
+        .cart-bar-bounce { animation:cartBarBounce 0.35s ease; }
       `}</style>
 
       <div className="menu-root">
@@ -451,14 +476,16 @@ export default function MenuPage() {
             />
           </div>
 
-          {/* Category nav */}
-          <nav className="menu-cats hide-scrollbar">
-            {['All', ...CATEGORIES].map(cat => (
-              <button key={cat} onClick={() => setActiveCategory(cat)} className={`menu-cat-btn ${activeCategory === cat ? 'active' : 'inactive'}`}>
-                {cat}
-              </button>
-            ))}
-          </nav>
+          {/* Category nav — wrapped for right-edge fade mask */}
+          <div className="menu-cats-wrap">
+            <nav className="menu-cats hide-scrollbar">
+              {['All', ...CATEGORIES].map(cat => (
+                <button key={cat} onClick={() => setActiveCategory(cat)} className={`menu-cat-btn ${activeCategory === cat ? 'active' : 'inactive'}`}>
+                  {cat}
+                </button>
+              ))}
+            </nav>
+          </div>
 
           {/* Items */}
           <section>
@@ -493,10 +520,15 @@ export default function MenuPage() {
                   const cartItemId     = selectedVariant?.name ? `${item.id}::${selectedVariant.name}` : item.id
                   const qty            = getCartQty(item.id, selectedVariant?.name)
                   return (
-                    <div key={item.id} className="menu-card">
+                    <div key={item.id} className={`menu-card${!item.available ? ' unavailable' : ''}`}>
                       <div className="menu-card-img-wrap">
                         <img key={item.image} src={item.image || FALLBACK_IMAGE} alt={item.name} className="menu-card-img" onError={safeOnError} />
                         {item.badge && <span className="menu-card-badge">{item.badge}</span>}
+                        {!item.available && (
+                          <div className="menu-sold-out-overlay">
+                            <span className="menu-sold-out-badge">Sold Out</span>
+                          </div>
+                        )}
                       </div>
                       <div className="menu-card-body">
                         <div className="menu-card-top">
@@ -532,7 +564,12 @@ export default function MenuPage() {
                                 <span className="menu-qty-num">{qty}</span>
                               </>
                             )}
-                            <button onClick={() => addToCart(item, selectedVariant)} className="menu-add-btn">
+                            <button
+                              onClick={() => { if (!item.available) return; addToCart(item, selectedVariant); triggerCartBounce() }}
+                              className="menu-add-btn"
+                              disabled={!item.available}
+                              style={!item.available ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
+                            >
                               <span className="material-symbols-outlined">add</span>
                             </button>
                           </div>
@@ -571,7 +608,7 @@ export default function MenuPage() {
 
         {/* Sticky cart bar */}
         {cartCount > 0 && !showCart && (
-          <div onClick={() => setShowCart(true)} className="menu-cart-bar">
+          <div ref={cartBarRef} onClick={() => setShowCart(true)} className="menu-cart-bar">
             <div className="menu-cart-bar-left">
               <div className="menu-cart-bar-icon">
                 <span className="material-symbols-outlined">shopping_cart</span>
@@ -640,10 +677,41 @@ export default function MenuPage() {
                     value={specialInstructions}
                     onChange={e => setSpecialInstructions(e.target.value)}
                   />
-                  <div className="cart-total-row">
-                    <span className="cart-total-label">Total</span>
-                    <span className="cart-total-amount">₱{cartTotal.toFixed(2)}</span>
-                  </div>
+                  {(() => {
+                    const taxRate    = parseFloat(settings.taxRate    || '0') / 100
+                    const serviceFee = parseFloat(settings.serviceFee || '0')
+                    const tax        = cartTotal * taxRate
+                    const grandTotal = cartTotal + tax + serviceFee
+                    return (
+                      <>
+                        <div className="cart-total-row">
+                          <span className="cart-total-label">Subtotal</span>
+                          <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{cartTotal.toFixed(2)}</span>
+                        </div>
+                        {tax > 0 && (
+                          <div className="cart-total-row">
+                            <span className="cart-total-label">Tax ({settings.taxRate}%)</span>
+                            <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{tax.toFixed(2)}</span>
+                          </div>
+                        )}
+                        {serviceFee > 0 && (
+                          <div className="cart-total-row">
+                            <span className="cart-total-label">Service Fee</span>
+                            <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{serviceFee.toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className="cart-total-row">
+                          <span className="cart-total-label">Total</span>
+                          <span className="cart-total-amount">₱{grandTotal.toFixed(2)}</span>
+                        </div>
+                      </>
+                    )
+                  })()}
+                  {orderError && (
+                    <p style={{color:'#dc2626',fontSize:'0.82rem',fontWeight:500,textAlign:'center',marginBottom:'10px'}}>
+                      {orderError}
+                    </p>
+                  )}
                   <button onClick={placeOrder} disabled={isPlacing} className="cart-place-btn">
                     {isPlacing
                       ? <><span className="material-symbols-outlined animate-spin">progress_activity</span>Placing Order...</>

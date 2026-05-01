@@ -52,7 +52,7 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
       </div>
 
       {/* Transaction List */}
-      <div className="max-h-96 overflow-y-auto">
+      <div className="max-h-96 overflow-y-scroll overscroll-contain">
         {filteredTransactions.map(transaction => (
           <button
             key={transaction.id}
@@ -92,7 +92,7 @@ export function TransactionHistory({ transactions }: TransactionHistoryProps) {
           onClick={() => setSelectedTransaction(null)}
         >
           <div
-            className="bg-white rounded-2xl max-w-md w-full max-h-[80vh] overflow-y-auto"
+            className="bg-white rounded-2xl max-w-md w-full max-h-[80vh] overflow-y-scroll overscroll-contain"
             onClick={e => e.stopPropagation()}
           >
             {/* Modal Header */}

@@ -14,7 +14,7 @@ export function HistoryPanel({ open, onClose, recentTransactions }: HistoryPanel
 
   return (
     <div className="fixed inset-x-0 top-16 z-50 bg-white border-b border-surface-container-low shadow-lg animate-fade-in">
-      <div className="max-h-96 overflow-y-auto">
+      <div className="max-h-96 overflow-y-scroll overscroll-contain">
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-on-surface">Transaction History</h2>

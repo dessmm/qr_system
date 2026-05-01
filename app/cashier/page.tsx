@@ -9,6 +9,7 @@ import { NotificationsPanel } from '@/app/cashier/components/NotificationsPanel'
 import { QuickOrderPanel } from '@/app/cashier/components/QuickOrderPanel'
 import { HistoryPanel } from '@/app/cashier/components/HistoryPanel'
 import { SettingsPanel } from '@/app/cashier/components/SettingsPanel'
+import { TableOrderHistoryModal } from '@/app/cashier/components/TableOrderHistoryModal'
 import { listenToMenu, listenToTables, listenToOrders, MenuItem, CATEGORIES, Table, TableStatus, updateTableStatus, clearTableAfterPayment, Order } from '@/lib/data'
 
 function CashierContent() {
@@ -38,6 +39,8 @@ function CashierContent() {
   // applied locally before Firebase confirms the write.  Merged during render so
   // the UI updates instantly and reverts automatically once real data arrives.
   const [optimisticStatuses, setOptimisticStatuses] = useState<Record<string, TableStatus>>({})
+  const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [showTableHistory, setShowTableHistory] = useState<Table | null>(null)
 
   const { addTransaction, recentTransactions, items: cartItems } = useCart()
 
@@ -168,7 +171,7 @@ function CashierContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="h-screen overflow-hidden bg-background flex flex-col">
       {/* Header */}
       <header className="bg-white border-b border-surface-container-low sticky top-0 z-40">
         <div className="px-4 py-3 flex items-center justify-between">
@@ -275,9 +278,13 @@ function CashierContent() {
         recentTransactions={recentTransactions}
       />
 
-      <div className="flex flex-col lg:flex-row">
-        {/* Left Panel - Products */}
-        <div className="flex-1 p-4 lg:p-6">
+      {/* ── Two-column body ─────────────────────────────────────────────────
+           flex-1 min-h-0 lets the row fill exactly the remaining viewport
+           height after the header, without the body ever needing to scroll.
+      ────────────────────────────────────────────────────────────────────── */}
+      <div className="flex flex-col lg:flex-row flex-1 min-h-0">
+        {/* Left Panel — independently scrollable menu grid */}
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 lg:p-6">
           {/* Search & Filters */}
           <div className="mb-6 space-y-4">
             {/* Search */}
@@ -345,10 +352,13 @@ function CashierContent() {
           )}
         </div>
 
-        {/* Right Panel - Cart/History/Tables */}
-        <div className="w-full lg:w-96 xl:w-[440px] bg-surface-container-low p-4 lg:p-6 lg:border-l border-surface-container-low">
-          {/* Tabs */}
-          <div className="flex gap-2 mb-4">
+        {/* Right Panel — independently scrollable; flex-col so tabs stay
+             pinned at top and content area takes the remaining height */}
+        <div className="w-full lg:w-96 xl:w-[440px] bg-surface-container-low
+                        lg:border-l border-surface-container-low
+                        flex flex-col min-h-0">
+          {/* Tabs — sticky at top of right panel, padding kept here */}
+          <div className="flex gap-2 mb-0 p-4 lg:p-6 pb-4 shrink-0">
             <button
               onClick={() => setActiveTab('cart')}
               className={`flex-1 py-3 rounded-xl font-semibold transition-all ${
@@ -402,7 +412,9 @@ function CashierContent() {
             </button>
           </div>
 
-          {/* Content */}
+          {/* Tab content — flex-1 min-h-0 lets it fill the remaining right-panel
+               height; overflow-y-auto + overscroll-contain keep scroll contained */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 lg:p-6 pt-0">
           {activeTab === 'cart' ? (
             <CartSummary
               onComplete={handleTransactionComplete}
@@ -416,11 +428,7 @@ function CashierContent() {
               {orders.length > 0 && (
                 <div className="flex justify-end">
                   <button
-                    onClick={() => {
-                      if (confirm('Are you sure you want to clear all QR orders? This action cannot be undone.')) {
-                        setOrders([]) // Clear local state - in production, this should clear from Firebase
-                      }
-                    }}
+                    onClick={() => setShowClearConfirm(true)}
                     className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
                   >
                     <span className="material-symbols-outlined text-sm">delete_sweep</span>
@@ -634,13 +642,59 @@ function CashierContent() {
                         Seat Reserved Guest
                       </button>
                     )}
+
+                    {/* View Order History Button */}
+                    <button
+                      onClick={() => setShowTableHistory(selectedTable)}
+                      className="w-full py-2 px-4 bg-surface-container-high hover:bg-surface-container-highest text-on-surface rounded-lg font-medium transition-colors flex items-center justify-center gap-2 mt-2"
+                    >
+                      <span className="material-symbols-outlined">history</span>
+                      View Order History
+                    </button>
                   </div>
                 </div>
               )}
             </div>
           )}
+          </div>{/* end tab-content scroll wrapper */}
+        </div>{/* end right panel */}
+      </div>{/* end two-column body */}
+
+      {/* Clear Orders Confirm Modal */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-surface rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl p-6 text-center border border-outline-variant">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <span className="material-symbols-outlined text-red-600 text-3xl">delete_sweep</span>
+            </div>
+            <h3 className="text-xl font-bold text-on-surface mb-2">Clear All QR Orders?</h3>
+            <p className="text-sm text-on-surface-variant mb-8">Are you sure? This action cannot be undone.</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 py-3 border border-outline text-on-surface hover:bg-surface-variant transition-colors rounded-xl font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { setOrders([]); setShowClearConfirm(false); }}
+                className="flex-1 py-3 bg-red-600 hover:bg-red-700 transition-colors text-white rounded-xl font-bold shadow-sm active:scale-95"
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Table Order History Modal */}
+      {showTableHistory && (
+        <TableOrderHistoryModal
+          table={showTableHistory}
+          isOpen={!!showTableHistory}
+          onClose={() => setShowTableHistory(null)}
+        />
+      )}
     </div>
   )
 }

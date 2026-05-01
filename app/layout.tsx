@@ -1,18 +1,11 @@
 import type { Metadata } from 'next'
 import './globals.css'
 
-import { getSettings } from '@/lib/data'
-
-export async function generateMetadata(): Promise<Metadata> {
-  const settings = await getSettings();
-  return {
-    title: settings.restaurantName || 'Restaurant POS',
-    description: 'QR Table Ordering System — Order from your table instantly.',
-  };
+// Static metadata — restaurant name is loaded client-side via listenToSettings
+export const metadata: Metadata = {
+  title: 'Restaurant POS',
+  description: 'QR Table Ordering System — Order from your table instantly.',
 }
-
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -30,7 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <link
           rel="preload"
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
           as="style"
         />
 
@@ -40,7 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           rel="stylesheet"
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0"
           rel="stylesheet"
         />
       </head>

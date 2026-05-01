@@ -245,6 +245,11 @@ export default function AdminPage() {
   const [imageUploadMsg, setImageUploadMsg] = useState('')
   const [createTableError, setCreateTableError] = useState<string | null>(null)
   const [newTable, setNewTable] = useState({ tableNumber: 0, name: '', capacity: 4, shape: 'square' as 'square' | 'round' })
+  // Save item feedback
+  const [saveItemStatus, setSaveItemStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [saveItemError, setSaveItemError]   = useState('')
+  // Bulk availability modal
+  const [bulkTarget, setBulkTarget] = useState<{ category: string; available: boolean } | null>(null)
 
   // Helpers to read variants/tags off the editing item (stored as unknown extra fields)
   const editingVariants = (): MenuItemVariant[] => (editingItem as any)?.variants ?? []
@@ -290,9 +295,31 @@ export default function AdminPage() {
   }, {} as Record<string, number>)
 
   // ─── Handlers ─────────────────────────────────────────────────────────────────
+  // Optimistic toggle: flip immediately in state, then sync to Firebase
   const toggleAvailability = async (id: string) => {
     const item = menuItems.find(m => m.id === id)
-    if (item) await saveMenuItem({ ...item, available: !item.available })
+    if (!item) return
+    const next = !item.available
+    setMenuItems(prev => prev.map(m => m.id === id ? { ...m, available: next } : m))
+    try {
+      await saveMenuItem({ ...item, available: next })
+    } catch {
+      // revert on failure
+      setMenuItems(prev => prev.map(m => m.id === id ? { ...m, available: item.available } : m))
+    }
+  }
+
+  // Bulk availability toggle for an entire category
+  const toggleCategoryAvailability = async (category: string, available: boolean) => {
+    const items = menuItems.filter(i => i.category === category)
+    setMenuItems(prev => prev.map(m => m.category === category ? { ...m, available } : m))
+    try {
+      await Promise.all(items.map(i => saveMenuItem({ ...i, available })))
+    } catch {
+      // revert
+      setMenuItems(prev => prev.map(m => m.category === category ? { ...m, available: !available } : m))
+    }
+    setBulkTarget(null)
   }
 
   const resetImageState = () => { setImageUploadStatus('idle'); setImageUploadMsg('') }
@@ -321,12 +348,19 @@ export default function AdminPage() {
     setShowModal(true)
   }
 
-  // ── Matches doc2's working saveMenuItem call exactly ──
+  // ── handleSaveItem with try/catch and success/error feedback ──
   const handleSaveItem = async () => {
     if (!editingItem) return
-    await saveMenuItem(editingItem as MenuItem)
-    setShowModal(false)
-    setEditingItem(null)
+    setSaveItemStatus('saving')
+    setSaveItemError('')
+    try {
+      await saveMenuItem(editingItem as MenuItem)
+      setSaveItemStatus('saved')
+      setTimeout(() => { setSaveItemStatus('idle'); setShowModal(false); setEditingItem(null) }, 900)
+    } catch (err) {
+      setSaveItemStatus('error')
+      setSaveItemError(`Save failed: ${(err as Error).message}`)
+    }
   }
 
   // ── Matches doc2's working deleteMenuItem pattern ──
@@ -594,26 +628,42 @@ export default function AdminPage() {
                 </button>
               </div>
 
-              {/* Category filter tabs */}
-              <div className="flex gap-2 mb-6 overflow-x-auto pb-1 scrollbar-hide">
-                {['All', ...CATEGORIES].map(cat => (
+              {/* Category filter tabs & Bulk Action */}
+              <div className="flex justify-between items-center mb-6">
+                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                  {['All', ...CATEGORIES].map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setActiveCategory(cat)}
+                      className={`flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold border transition-all ${
+                        activeCategory === cat
+                          ? 'bg-primary text-white border-primary shadow-sm'
+                          : 'bg-white text-zinc-600 border-zinc-200 hover:border-primary hover:text-primary'
+                      }`}
+                    >
+                      {cat}
+                      {cat !== 'All' && categoryCounts[cat] > 0 && (
+                        <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[9px] ${activeCategory === cat ? 'bg-white/30 text-white' : 'bg-zinc-100 text-zinc-500'}`}>
+                          {categoryCounts[cat]}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                {activeCategory !== 'All' && categoryCounts[activeCategory] > 0 && (
                   <button
-                    key={cat}
-                    onClick={() => setActiveCategory(cat)}
-                    className={`flex-shrink-0 px-4 py-2 rounded-full text-xs font-bold border transition-all ${
-                      activeCategory === cat
-                        ? 'bg-primary text-white border-primary shadow-sm'
-                        : 'bg-white text-zinc-600 border-zinc-200 hover:border-primary hover:text-primary'
-                    }`}
+                    onClick={() => {
+                      // Determine if all are available to toggle to unavailable, else make all available
+                      const items = menuItems.filter(i => i.category === activeCategory)
+                      const allAvailable = items.every(i => i.available)
+                      setBulkTarget({ category: activeCategory, available: !allAvailable })
+                    }}
+                    className="flex-shrink-0 ml-4 px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-bold text-zinc-500 hover:bg-zinc-100 transition-colors flex items-center gap-1"
                   >
-                    {cat}
-                    {cat !== 'All' && categoryCounts[cat] > 0 && (
-                      <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[9px] ${activeCategory === cat ? 'bg-white/30 text-white' : 'bg-zinc-100 text-zinc-500'}`}>
-                        {categoryCounts[cat]}
-                      </span>
-                    )}
+                    <span className="material-symbols-outlined text-[14px]">toggle_on</span>
+                    Bulk Toggle
                   </button>
-                ))}
+                )}
               </div>
 
               {filteredMenu.length === 0 ? (
@@ -1094,23 +1144,36 @@ export default function AdminPage() {
               </div>{/* end modal body */}
 
               {/* Modal footer */}
-              <div className="px-6 py-4 border-t border-zinc-100 flex gap-3 flex-shrink-0">
-                <button
-                  onClick={() => { setShowModal(false); setEditingItem(null) }}
-                  className="flex-1 py-3 border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:bg-zinc-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSaveItem}
-                  disabled={imageUploadStatus === 'uploading'}
-                  className="flex-[2] py-3 bg-primary hover:bg-orange-800 text-white rounded-xl text-sm font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 shadow-md"
-                >
-                  {imageUploadStatus === 'uploading'
-                    ? <><span className="material-symbols-outlined animate-spin text-sm">progress_activity</span> Uploading…</>
-                    : menuItems.find(m => m.id === editingItem.id) ? 'Update dish' : 'Add dish'
-                  }
-                </button>
+              <div className="px-6 py-4 border-t border-zinc-100 flex flex-col gap-3 flex-shrink-0">
+                {saveItemError && (
+                  <div className="text-red-600 text-sm font-semibold text-center bg-red-50 p-2 rounded-lg">
+                    {saveItemError}
+                  </div>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setShowModal(false); setEditingItem(null) }}
+                    className="flex-1 py-3 border border-zinc-200 rounded-xl text-sm font-bold text-zinc-600 hover:bg-zinc-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveItem}
+                    disabled={imageUploadStatus === 'uploading' || saveItemStatus === 'saving' || saveItemStatus === 'saved'}
+                    className={`flex-[2] py-3 rounded-xl text-sm font-bold transition-all active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 shadow-md ${
+                      saveItemStatus === 'saved' ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-primary hover:bg-orange-800 text-white'
+                    }`}
+                  >
+                    {imageUploadStatus === 'uploading'
+                      ? <><span className="material-symbols-outlined animate-spin text-sm">progress_activity</span> Uploading…</>
+                      : saveItemStatus === 'saving'
+                      ? <><span className="material-symbols-outlined animate-spin text-sm">progress_activity</span> Saving…</>
+                      : saveItemStatus === 'saved'
+                      ? <><span className="material-symbols-outlined text-sm">check</span> Saved!</>
+                      : menuItems.find(m => m.id === editingItem.id) ? 'Update dish' : 'Add dish'
+                    }
+                  </button>
+                </div>
               </div>
 
             </div>
@@ -1198,6 +1261,33 @@ export default function AdminPage() {
                   className="flex-1 py-3 bg-red-600 hover:bg-red-700 transition-colors text-white rounded-xl font-bold shadow-lg active:scale-95"
                 >
                   Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Toggle Modal */}
+        {bulkTarget && (
+          <div className="fixed inset-0 bg-zinc-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl w-full max-w-sm overflow-hidden shadow-2xl p-6 text-center">
+              <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <span className="material-symbols-outlined text-blue-600 text-3xl">toggle_on</span>
+              </div>
+              <h3 className="text-xl font-bold text-zinc-900 mb-2">Bulk Update {bulkTarget.category}?</h3>
+              <p className="text-sm text-zinc-500 mb-8">
+                Mark all items in <strong>{bulkTarget.category}</strong> as{' '}
+                <strong className={bulkTarget.available ? 'text-green-600' : 'text-red-600'}>
+                  {bulkTarget.available ? 'Available' : 'Unavailable'}
+                </strong>?
+              </p>
+              <div className="flex gap-3">
+                <button onClick={() => setBulkTarget(null)} className="flex-1 py-3 border-2 border-zinc-200 text-zinc-700 hover:bg-zinc-50 transition-colors rounded-xl font-bold">Cancel</button>
+                <button
+                  onClick={() => toggleCategoryAvailability(bulkTarget.category, bulkTarget.available)}
+                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 transition-colors text-white rounded-xl font-bold shadow-lg active:scale-95"
+                >
+                  Confirm
                 </button>
               </div>
             </div>
