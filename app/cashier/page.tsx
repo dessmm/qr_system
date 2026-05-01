@@ -18,6 +18,7 @@ function CashierContent() {
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
   const [tables, setTables] = useState<Table[]>([])
   const [orders, setOrders] = useState<Order[]>([])
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null)
 
   // Header panel open/close state
   const [notifOpen, setNotifOpen]   = useState(false)
@@ -178,7 +179,7 @@ function CashierContent() {
             </div>
             <div>
               <h1 className="font-bold text-on-surface text-lg">Cashier POS</h1>
-              <p className="text-xs text-on-surface-variant">Terracotta Kitchen</p>
+              <p className="text-xs text-on-surface-variant">Wawo's House</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -439,8 +440,13 @@ function CashierContent() {
               ) : (
                 orders.map(order => {
                   const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
+                  const isExpanded = expandedOrderId === order.id
                   return (
-                    <div key={order.id} className="bg-white rounded-xl p-4 border border-surface-container-low">
+                    <div 
+                      key={order.id} 
+                      className="bg-white rounded-xl p-4 border border-surface-container-low cursor-pointer hover:bg-surface-container-high/50 transition-colors"
+                      onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
+                    >
                       <div className="flex items-start justify-between mb-3">
                         <div>
                           <h3 className="font-semibold">Order {order.id.slice(0, 8)}</h3>
@@ -448,7 +454,12 @@ function CashierContent() {
                             Table {table?.tableNumber || 'Unknown'} • {order.status}
                           </p>
                         </div>
-                        <span className="text-sm font-mono text-primary">₱{order.total.toFixed(2)}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-mono text-primary">₱{order.total.toFixed(2)}</span>
+                          <span className="material-symbols-outlined text-on-surface-variant">
+                            {isExpanded ? 'expand_less' : 'expand_more'}
+                          </span>
+                        </div>
                       </div>
                       <div className="space-y-2 mb-3">
                         {order.items.map((item, idx) => (
@@ -458,18 +469,39 @@ function CashierContent() {
                           </div>
                         ))}
                       </div>
-                      {table && table.status === 'available' && (
-                        <button
-                          onClick={() => handleTableStatusChange(table.id, 'occupied')}
-                          className="w-full py-2 px-4 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                          <span className="material-symbols-outlined">restaurant</span>
-                          Mark Table as Occupied
-                        </button>
-                      )}
-                      {table && table.status === 'occupied' && (
-                        <div className="text-center py-2 text-green-600 font-medium">
-                          Table is occupied
+                      {isExpanded && (
+                        <div className="border-t border-surface-container-low pt-3 space-y-2">
+                          {table && (
+                            <div className="text-sm text-on-surface-variant mb-2">
+                              Table Status: <span className={`font-medium ${table.status === 'occupied' ? 'text-green-600' : 'text-amber-600'}`}>{table.status}</span>
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            {table && table.status === 'available' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleTableStatusChange(table.id, 'occupied')
+                                  setExpandedOrderId(null)
+                                }}
+                                className="flex-1 py-2 px-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
+                              >
+                                <span className="material-symbols-outlined text-sm">restaurant</span>
+                                Mark Occupied
+                              </button>
+                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                // Could add view details or other actions
+                                setExpandedOrderId(null)
+                              }}
+                              className="flex-1 py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
+                            >
+                              <span className="material-symbols-outlined text-sm">visibility</span>
+                              View Details
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>

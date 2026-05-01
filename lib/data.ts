@@ -329,9 +329,8 @@ export async function updateOrderStatus(orderId: string, status: OrderStatus) {
 }
 
 /**
- * Kitchen "Mark Served" — only marks the ORDER as served.
- * The table deliberately stays OCCUPIED because the guests are still
- * seated. Table is only freed by clearTableAfterPayment() in checkout.
+ * Kitchen "Mark Served" — marks the ORDER as served and ensures the table is occupied.
+ * The table is occupied when the order is placed, but this ensures it's occupied when served.
  *
  * Lifecycle summary:
  *   new  →  in-progress  →  ready  →  served   (kitchen pipeline)
@@ -339,11 +338,26 @@ export async function updateOrderStatus(orderId: string, status: OrderStatus) {
  */
 export async function markOrderServed(orderId: string): Promise<void> {
   try {
-    await updateDoc(doc(db, ORDERS_COL, orderId), {
+    // First, find the table associated with this order
+    const tablesSnap = await getDocs(collection(db, TABLES_COL))
+    const tableDoc = tablesSnap.docs.find(doc => doc.data().currentOrderId === orderId)
+    
+    const batch = writeBatch(db)
+    batch.update(doc(db, ORDERS_COL, orderId), {
       status: 'served',
       updatedAt: Date.now()
     })
-    console.log('[markOrderServed] order served — table stays occupied until payment')
+    
+    // Ensure table is occupied
+    if (tableDoc) {
+      batch.update(doc(db, TABLES_COL, tableDoc.id), {
+        status: 'occupied',
+        updatedAt: Date.now()
+      })
+    }
+    
+    await batch.commit()
+    console.log('[markOrderServed] order served and table occupied')
   } catch (error) {
     console.error('Error marking order served:', error)
   }

@@ -5,11 +5,39 @@ import { useParams, useRouter } from 'next/navigation'
 import { listenToMenu, listenToSettings, listenToTables, MenuItem, CATEGORIES, CartItem, addOrder, AppSettings, DEFAULT_SETTINGS, Table } from '@/lib/data'
 import { useState, useEffect, useCallback } from 'react'
 
-// ─── Safe image fallback ─────────────────────────────────────────────────────
+// ─── Safe image fallback ─────────────────────────────────────────────────────────
 const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400'
 function safeOnError(e: React.SyntheticEvent<HTMLImageElement>) {
   const target = e.target as HTMLImageElement
   if (target.src !== FALLBACK_IMAGE) target.src = FALLBACK_IMAGE
+}
+
+// ─── Tag color function ──────────────────────────────────────────────────────────
+const getTagStyle = (tag: string) => {
+  const tagLower = tag.toLowerCase()
+  if (tagLower.includes('spicy') || tagLower.includes('hot')) {
+    return { background: 'linear-gradient(135deg,#dc2626 0%,#b91c1c 100%)', color: 'white' }
+  }
+  if (tagLower.includes('vegan') || tagLower.includes('vegetarian')) {
+    return { background: 'linear-gradient(135deg,#059669 0%,#047857 100%)', color: 'white' }
+  }
+  if (tagLower.includes('bestseller') || tagLower.includes('popular')) {
+    return { background: 'linear-gradient(135deg,#d97706 0%,#b45309 100%)', color: 'white' }
+  }
+  if (tagLower.includes('new')) {
+    return { background: 'linear-gradient(135deg,#16a34a 0%,#15803d 100%)', color: 'white' }
+  }
+  if (tagLower.includes('recommended') || tagLower.includes('chef')) {
+    return { background: 'linear-gradient(135deg,#7c3aed 0%,#6d28d9 100%)', color: 'white' }
+  }
+  if (tagLower.includes('gluten') || tagLower.includes('free')) {
+    return { background: 'linear-gradient(135deg,#0891b2 0%,#0e7490 100%)', color: 'white' }
+  }
+  if (tagLower.includes('organic') || tagLower.includes('fresh')) {
+    return { background: 'linear-gradient(135deg,#65a30d 0%,#4d7c0f 100%)', color: 'white' }
+  }
+  // Default fallback
+  return { background: 'linear-gradient(135deg,#667eea 0%,#764ba2 100%)', color: 'white' }
 }
 
 // ─── Welcome Screen ──────────────────────────────────────────────────────────
@@ -216,9 +244,11 @@ export default function MenuPage() {
         setIsPlacing(false)
         alert('Failed to place order. Please try again.')
       }
-    } catch {
+    } catch (error) {
       setIsPlacing(false)
-      alert('Failed to place order. Please try again.')
+      const message = error instanceof Error ? error.message : String(error)
+      alert(`Failed to place order. ${message}`)
+      console.error('[placeOrder] error:', error)
     }
   }
 
@@ -314,7 +344,7 @@ export default function MenuPage() {
         .menu-variant-btn.active { background:#0a0a0a;color:white;border-color:transparent; }
         .menu-card-desc { font-size:0.78rem;color:rgba(0,0,0,0.45);line-height:1.5;margin:0; }
         .menu-card-footer { display:flex;align-items:center;gap:6px; }
-        .menu-tag { background:#f0efe9;color:rgba(0,0,0,0.5);font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:3px 8px;border-radius:6px; }
+        .menu-tag { font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;padding:3px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);box-shadow:0 2px 4px rgba(0,0,0,0.1); }
         .menu-card-actions { margin-left:auto;display:flex;align-items:center;gap:8px; }
         .menu-qty-btn { width:32px;height:32px;border-radius:50%;border:0.5px solid rgba(0,0,0,0.15);background:white;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all 0.15s ease; }
         .menu-qty-btn:hover { background:#f0efe9;border-color:rgba(0,0,0,0.25); }
@@ -522,7 +552,15 @@ export default function MenuPage() {
                           <p className="menu-card-desc">{item.description}</p>
                         </div>
                         <div className="menu-card-footer">
-                          {item.tags?.map(tag => <span key={tag} className="menu-tag">{tag}</span>)}
+                          {item.tags?.map(tag => (
+                            <span 
+                              key={tag} 
+                              className="menu-tag" 
+                              style={getTagStyle(tag)}
+                            >
+                              {tag}
+                            </span>
+                          ))}
                           <div className="menu-card-actions">
                             {qty > 0 && (
                               <>
