@@ -270,13 +270,6 @@ export default function AdminPage() {
     return () => { unsubOrders(); unsubMenu(); unsubSettings(); unsubTables() }
   }, [user])
 
-  // One-time typo fix
-  useEffect(() => {
-    const wrongTable = tables.find(t => t.name === 'Long Tablr')
-    if (wrongTable) {
-      updateTable(wrongTable.id, { name: 'Long Table' })
-    }
-  }, [tables])
 
   // ─── Computed stats ───────────────────────────────────────────────────────────
   const servedOrders = orders.filter(o => o.status === 'served')
@@ -1135,7 +1128,41 @@ export default function AdminPage() {
                     placeholder="https://images.unsplash.com/…"
                   />
                 </div>
-
+                  {/* Stock */}
+<div>
+  <label className="block text-[10px] font-bold text-zinc-400 uppercase tracking-widest mb-1.5">
+    Stock count
+  </label>
+  <div className="flex items-center gap-3">
+    <input
+      type="number"
+      min={0}
+      className="w-full bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-zinc-900 focus:ring-2 focus:ring-primary outline-none text-sm"
+      placeholder="Leave blank for unlimited"
+      value={(editingItem as any).stock ?? ''}
+      onChange={e => {
+        const val = e.target.value
+        setEditingItem({
+          ...editingItem,
+          stock: val === '' ? undefined : parseInt(val) || 0,
+        } as any)
+      }}
+    />
+    {(editingItem as any).stock !== undefined && (
+      <button
+        onClick={() => setEditingItem({ ...editingItem, stock: undefined } as any)}
+        className="flex-shrink-0 px-3 py-3 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-500 hover:bg-zinc-100 transition-colors"
+        title="Clear stock (unlimited)"
+      >
+        Clear
+      </button>
+    )}
+  </div>
+  <p className="text-[10px] text-zinc-400 mt-1.5">
+    💡 This number shows as the <strong>86 badge</strong> on the cashier product card.
+    Leave blank for unlimited stock.
+  </p>
+</div>
                 {/* Availability toggle */}
                 <div className="flex items-center justify-between bg-zinc-50 rounded-xl px-4 py-3 border border-zinc-100">
                   <div>

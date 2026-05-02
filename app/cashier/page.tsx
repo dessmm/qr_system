@@ -6,11 +6,10 @@ import { ProductCard } from '@/app/cashier/components/ProductCard'
 import { CartSummary } from '@/app/cashier/components/CartSummary'
 import { TransactionHistory } from '@/app/cashier/components/TransactionHistory'
 import { NotificationsPanel } from '@/app/cashier/components/NotificationsPanel'
-import { QuickOrderPanel } from '@/app/cashier/components/QuickOrderPanel'
 import { HistoryPanel } from '@/app/cashier/components/HistoryPanel'
 import { SettingsPanel } from '@/app/cashier/components/SettingsPanel'
 import { TableOrderHistoryModal } from '@/app/cashier/components/TableOrderHistoryModal'
-import { listenToMenu, listenToTables, listenToOrders, MenuItem, CATEGORIES, Table, TableStatus, updateTableStatus, clearTableAfterPayment, Order, updateOrderStatus } from '@/lib/data'
+import { listenToMenu, listenToTables, listenToOrders, MenuItem, CATEGORIES, Table, TableStatus, updateTableStatus, clearTableAfterPayment, Order, updateOrderStatus, processPaymentAndActivateOrder } from '@/lib/data'
 
 function CashierContent() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -20,16 +19,18 @@ function CashierContent() {
   const [tables, setTables] = useState<Table[]>([])
   const [orders, setOrders] = useState<Order[]>([])
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null)
+  
+  // Pay QR order state
+  const [payingOrder, setPayingOrder] = useState<Order | null>(null)
+  const [paymentReceivedStr, setPaymentReceivedStr] = useState('')
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false)
+  const [qrReceiptTransaction, setQrReceiptTransaction] = useState<Transaction | null>(null)
 
   // Header panel open/close state
   const [notifOpen, setNotifOpen]   = useState(false)
-  const [cartOpen, setCartOpen]     = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
-
-  // Fix #5: cart icon pulse — ref to the cart icon span so we can add/remove a CSS class
-  const cartIconRef = useRef<HTMLSpanElement>(null)
 
   // FIX 1 & 3: Store only the selected table ID instead of the full object.
   // This prevents stale state — the UI always derives the current table from
@@ -43,7 +44,19 @@ function CashierContent() {
   const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [showTableHistory, setShowTableHistory] = useState<Table | null>(null)
 
+  // QR Payment modal state
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'digital'>('cash')
+
   const { addTransaction, recentTransactions, items: cartItems } = useCart()
+
+  const getOrderStatusLabel = useCallback((order: Order) => {
+    if (order.status === 'new' && order.paymentStatus === 'paid') return 'Paid'
+    if (order.status === 'pending_payment') return 'Pending payment'
+    if (order.status === 'in-progress') return 'In progress'
+    if (order.status === 'ready') return 'Ready'
+    if (order.status === 'served') return 'Served'
+    return 'New'
+  }, [])
 
   useEffect(() => {
     const unsubMenu = listenToMenu(setMenuItems)
@@ -130,14 +143,19 @@ function CashierContent() {
     []
   )
 
-  // Fix #5: pulse the cart icon for 400ms when a product is added
-  const handleCartPulse = useCallback(() => {
-    const el = cartIconRef.current
-    if (!el) return
-    el.classList.add('cart-pulse')
-    setTimeout(() => el.classList.remove('cart-pulse'), 400)
-  }, [])
+  useEffect(() => {
+    if (!qrReceiptTransaction) return
 
+    const timer = window.setTimeout(() => {
+      setPayingOrder(null)
+      setQrReceiptTransaction(null)
+      setPaymentReceivedStr('')
+    }, 4000)
+
+    return () => window.clearTimeout(timer)
+  }, [qrReceiptTransaction])
+
+  // Fix #5: pulse the cart icon for 400ms when a product is added
   const getStatusColor = (status: TableStatus) => {
     switch (status) {
       case 'available': return 'bg-green-100 text-green-700 border-green-200'
@@ -182,13 +200,13 @@ function CashierContent() {
             </div>
             <div>
               <h1 className="font-bold text-on-surface text-lg">Cashier POS</h1>
-              <p className="text-xs text-on-surface-variant">Wawo's House</p>
+              <p className="text-xs text-on-surface-variant">Wawo&apos;s House</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {/* 🔔 Bell — Notifications */}
             <button
-              onClick={() => { setNotifOpen(v => !v); setCartOpen(false); setSettingsOpen(false); setHistoryOpen(false) }}
+              onClick={() => { setNotifOpen(v => !v); setSettingsOpen(false); setHistoryOpen(false) }}
               className="relative p-2 hover:bg-surface-container-high rounded-xl transition-colors"
               aria-label="Notifications"
             >
@@ -200,25 +218,9 @@ function CashierContent() {
               )}
             </button>
 
-            {/* 🛒 Cart — Quick Order Builder */}
+            {/*  History */}
             <button
-              onClick={() => { setCartOpen(v => !v); setNotifOpen(false); setSettingsOpen(false); setHistoryOpen(false) }}
-              className="relative p-2 hover:bg-surface-container-high rounded-xl transition-colors"
-              aria-label="Quick order"
-            >
-              <span ref={cartIconRef} className="material-symbols-outlined text-on-surface-variant">
-                shopping_cart
-              </span>
-              {cartItems.length > 0 && (
-                <span className="absolute top-0.5 right-0.5 min-w-[18px] h-[18px] bg-primary text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1">
-                  {cartItems.reduce((s, i) => s + i.quantity, 0)}
-                </span>
-              )}
-            </button>
-
-            {/* 📄 History */}
-            <button
-              onClick={() => { setHistoryOpen(v => !v); setNotifOpen(false); setCartOpen(false); setSettingsOpen(false) }}
+              onClick={() => { setHistoryOpen(v => !v); setNotifOpen(false); setSettingsOpen(false) }}
               className="relative p-2 hover:bg-surface-container-high rounded-xl transition-colors"
               aria-label="Transaction History"
             >
@@ -232,7 +234,7 @@ function CashierContent() {
 
             {/* ⚙️ Settings */}
             <button
-              onClick={() => { setSettingsOpen(v => !v); setNotifOpen(false); setCartOpen(false); setHistoryOpen(false) }}
+              onClick={() => { setSettingsOpen(v => !v); setNotifOpen(false); setHistoryOpen(false) }}
               className="p-2 hover:bg-surface-container-high rounded-xl transition-colors"
               aria-label="Settings"
             >
@@ -250,7 +252,6 @@ function CashierContent() {
           60%  { transform: scale(0.9); }
           100% { transform: scale(1); }
         }
-        .cart-pulse { animation: cartPulse 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .animate-fade-in { animation: fadeIn 0.15s ease-in; }
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -262,11 +263,6 @@ function CashierContent() {
         open={notifOpen}
         onClose={() => setNotifOpen(false)}
         onUnreadChange={setUnreadCount}
-      />
-      <QuickOrderPanel
-        open={cartOpen}
-        onClose={() => setCartOpen(false)}
-        tables={tablesWithOptimistic}
       />
       <HistoryPanel
         open={historyOpen}
@@ -326,7 +322,6 @@ function CashierContent() {
               <ProductCard
                 key={product.id}
                 product={product}
-                onCartPulse={handleCartPulse}
               />
             ))}
           </div>
@@ -385,9 +380,9 @@ function CashierContent() {
               <span className="flex items-center justify-center gap-2">
                 <span className="material-symbols-outlined">qr_code</span>
                 QR Orders
-                {orders.filter(o => o.status === 'new').length > 0 && (
+                {orders.filter(o => (o.status === 'new' || o.status === 'accepted') && o.paymentStatus !== 'paid').length > 0 && (
                   <span className="bg-blue-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
-                    {orders.filter(o => o.status === 'new').length}
+                    {orders.filter(o => (o.status === 'new' || o.status === 'accepted') && o.paymentStatus !== 'paid').length}
                   </span>
                 )}
               </span>
@@ -447,16 +442,64 @@ function CashierContent() {
                   <p className="text-sm text-outline mt-1">Orders placed via QR codes will appear here</p>
                 </div>
               ) : (
-<<<<<<< HEAD
                 <div className="space-y-6">
-                  {/* New Orders Section */}
-                  {orders.filter(o => o.status === 'new').length > 0 && (
+                  {/* Awaiting Acceptance Section */}
+                  {orders.filter(o => o.status === 'pending_payment').length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
+                        Awaiting Acceptance
+                      </h3>
+                      {orders.filter(o => o.status === 'pending_payment').map(order => {
+                        const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
+                        const timeString = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        return (
+                          <div key={order.id} className="bg-orange-50/50 rounded-xl p-4 border border-orange-100 shadow-sm">
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <h3 className="font-semibold text-orange-900">Order {order.id.slice(0, 8)}</h3>
+                                <p className="text-sm text-orange-700 font-medium">
+                                  Table {table?.tableNumber || 'Unknown'} • {timeString}
+                                </p>
+                              </div>
+                              <span className="text-sm font-mono text-orange-800 font-bold">₱{order.total.toFixed(2)}</span>
+                            </div>
+                            <div className="space-y-2 mb-4 bg-white/60 p-3 rounded-lg">
+                              {order.items.map((item, idx) => (
+                                <div key={idx} className="flex justify-between text-sm">
+                                  <span className="font-medium text-on-surface">{item.quantity}x {item.name}</span>
+                                  <span className="text-on-surface-variant">₱{(item.price * item.quantity).toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await updateOrderStatus(order.id, 'accepted')
+                                } catch (error) {
+                                  console.error('Error accepting order:', error)
+                                  alert('Failed to accept order. Check console.')
+                                }
+                              }}
+                              className="w-full py-3 px-4 bg-orange-600 hover:bg-orange-700 text-white rounded-lg font-bold transition-colors flex items-center justify-center gap-2 shadow-sm"
+                            >
+                              <span className="material-symbols-outlined">check_circle</span>
+                              Accept Order
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Awaiting Payment Section */}
+                  {orders.filter(o => o.status === 'accepted').length > 0 && (
                     <div className="space-y-3">
                       <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
-                        New Orders
+                        Awaiting Payment
                       </h3>
-                      {orders.filter(o => o.status === 'new').map(order => {
+                      {orders.filter(o => o.status === 'accepted').map(order => {
                         const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
                         const timeString = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                         return (
@@ -479,93 +522,28 @@ function CashierContent() {
                               ))}
                             </div>
                             <button
-                              onClick={() => updateOrderStatus(order.id, 'in-progress')}
+                              onClick={() => {
+                                setPayingOrder(order)
+                                setPaymentReceivedStr('')
+                              }}
                               className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold transition-colors flex items-center justify-center gap-2 shadow-sm"
                             >
-                              <span className="material-symbols-outlined">done_all</span>
-                              Accept Order
+                              <span className="material-symbols-outlined">payments</span>
+                              Process Payment
                             </button>
                           </div>
                         )
                       })}
-=======
-                orders.map(order => {
-                  const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
-                  const isExpanded = expandedOrderId === order.id
-                  return (
-                    <div 
-                      key={order.id} 
-                      className="bg-white rounded-xl p-4 border border-surface-container-low cursor-pointer hover:bg-surface-container-high/50 transition-colors"
-                      onClick={() => setExpandedOrderId(isExpanded ? null : order.id)}
-                    >
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h3 className="font-semibold">Order {order.id.slice(0, 8)}</h3>
-                          <p className="text-sm text-on-surface-variant">
-                            Table {table?.tableNumber || 'Unknown'} • {order.status}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-mono text-primary">₱{order.total.toFixed(2)}</span>
-                          <span className="material-symbols-outlined text-on-surface-variant">
-                            {isExpanded ? 'expand_less' : 'expand_more'}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="space-y-2 mb-3">
-                        {order.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between text-sm">
-                            <span>{item.quantity}x {item.name}</span>
-                            <span>₱{(item.price * item.quantity).toFixed(2)}</span>
-                          </div>
-                        ))}
-                      </div>
-                      {isExpanded && (
-                        <div className="border-t border-surface-container-low pt-3 space-y-2">
-                          {table && (
-                            <div className="text-sm text-on-surface-variant mb-2">
-                              Table Status: <span className={`font-medium ${table.status === 'occupied' ? 'text-green-600' : 'text-amber-600'}`}>{table.status}</span>
-                            </div>
-                          )}
-                          <div className="flex gap-2">
-                            {table && table.status === 'available' && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleTableStatusChange(table.id, 'occupied')
-                                  setExpandedOrderId(null)
-                                }}
-                                className="flex-1 py-2 px-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
-                              >
-                                <span className="material-symbols-outlined text-sm">restaurant</span>
-                                Mark Occupied
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                // Could add view details or other actions
-                                setExpandedOrderId(null)
-                              }}
-                              className="flex-1 py-2 px-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
-                            >
-                              <span className="material-symbols-outlined text-sm">visibility</span>
-                              View Details
-                            </button>
-                          </div>
-                        </div>
-                      )}
->>>>>>> alas/alas_features
                     </div>
                   )}
 
                   {/* Acknowledged Orders Section */}
-                  {orders.filter(o => o.status !== 'new').length > 0 && (
+                  {orders.filter(o => (o.status === 'new' && o.paymentStatus === 'paid') || (o.status !== 'new' && o.status !== 'pending_payment')).length > 0 && (
                     <div className="space-y-3">
                       <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider">
                         Acknowledged
                       </h3>
-                      {orders.filter(o => o.status !== 'new').map(order => {
+                      {orders.filter(o => (o.status === 'new' && o.paymentStatus === 'paid') || (o.status !== 'new' && o.status !== 'pending_payment')).map(order => {
                         const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
                         const timeString = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                         return (
@@ -579,7 +557,7 @@ function CashierContent() {
                               </div>
                               <div className="text-right">
                                 <span className="text-sm font-mono text-primary block">₱{order.total.toFixed(2)}</span>
-                                <span className="text-[10px] uppercase font-bold text-green-600 tracking-wider">{order.status}</span>
+                                <span className="text-[10px] uppercase font-bold text-green-600 tracking-wider">{getOrderStatusLabel(order)}</span>
                               </div>
                             </div>
                             <div className="space-y-1 mb-2">
@@ -703,7 +681,7 @@ function CashierContent() {
                           <div className="space-y-1">
                             <p className="text-xs text-amber-700">
                               <span className="font-mono">{order.id.slice(0, 8)}</span>
-                              {' '}• {order.status}
+                              {' '}• {getOrderStatusLabel(order)}
                             </p>
                             {/* Currency: Philippine Peso */}
                             <p className="text-xs text-amber-600">
@@ -806,6 +784,296 @@ function CashierContent() {
           isOpen={!!showTableHistory}
           onClose={() => setShowTableHistory(null)}
         />
+      )}
+
+      {/* Payment Modal for QR Orders */}
+      {payingOrder && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-surface rounded-3xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-outline-variant">
+            {qrReceiptTransaction ? (
+              /* Receipt View */
+              <div className="flex flex-col h-full bg-white">
+                <div className="bg-primary text-white p-4 text-center">
+                  <span className="material-symbols-outlined text-3xl mb-1">check_circle</span>
+                  <h3 className="font-bold text-lg">Transaction Complete</h3>
+                  <p className="text-sm opacity-90">{qrReceiptTransaction.id.slice(0, 8)}</p>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                  <div className="text-center border-b border-outline-variant pb-3 mb-3">
+                    <p className="text-xs text-on-surface-variant">{qrReceiptTransaction.timestamp.toLocaleString()}</p>
+                  </div>
+
+                  <div className="flex justify-between items-center text-sm text-on-surface-variant mb-3">
+                    <span>{qrReceiptTransaction.orderType === 'takeout' ? 'Takeout Order' : 'Dine-in Order'}</span>
+                  </div>
+                  <div className="space-y-3">
+                    {qrReceiptTransaction.items.map((item, idx) => (
+                      <div key={idx} className="flex justify-between text-base">
+                        <span className="text-on-surface font-medium">{item.quantity}x {item.name}</span>
+                        <span className="text-on-surface">₱{(item.price * item.quantity).toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-outline-variant pt-4 space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-on-surface-variant">Subtotal</span>
+                      <span className="text-on-surface">₱{qrReceiptTransaction.subtotal.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-on-surface-variant">Tax</span>
+                      <span className="text-on-surface">₱{qrReceiptTransaction.tax.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-on-surface-variant">Discount</span>
+                      <span className="text-on-surface">₱{qrReceiptTransaction.discount.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-xl font-bold pt-3 border-t border-outline-variant">
+                      <span className="text-on-surface">Total</span>
+                      <span className="text-primary">₱{qrReceiptTransaction.total.toFixed(2)}</span>
+                    </div>
+                  </div>
+                  <div className="bg-surface-container-low rounded-xl p-3 space-y-1 mt-4">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-on-surface-variant">Payment Method</span>
+                      <span className="text-on-surface capitalize">{qrReceiptTransaction.paymentMethod}</span>
+                    </div>
+                    {qrReceiptTransaction.paymentMethod === 'cash' && (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-on-surface-variant">Received</span>
+                          <span className="text-on-surface">₱{qrReceiptTransaction.paymentReceived.toFixed(2)}</span>
+                        </div>
+                        {qrReceiptTransaction.change > 0 && (
+                          <div className="flex justify-between text-sm font-semibold">
+                            <span className="text-on-surface">Change</span>
+                            <span className="text-primary">₱{qrReceiptTransaction.change.toFixed(2)}</span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="p-6 border-t border-outline-variant bg-surface">
+                  <button
+                    onClick={() => {
+                      setPayingOrder(null)
+                      setQrReceiptTransaction(null)
+                    }}
+                    className="w-full py-4 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold transition-colors shadow-sm active:scale-95"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Payment Flow */
+              <>
+                <div className="bg-primary text-white p-6 flex justify-between items-start shrink-0">
+                  <div>
+                    <h2 className="text-2xl font-bold">Process Payment</h2>
+                    <p className="text-primary-container text-sm">
+                      {payingOrder.orderType === 'takeout' ? 'Takeout' : `Table ${payingOrder.tableNumber}`} • Order {payingOrder.id.slice(0, 8)}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => setPayingOrder(null)}
+                    className="p-2 hover:bg-white/20 rounded-full transition-colors"
+                  >
+                    <span className="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto flex flex-col md:flex-row min-h-0 bg-surface">
+                  {/* Left Column: Order Summary */}
+                  <div className="flex-1 p-6 md:border-r border-outline-variant space-y-6 bg-surface-container-lowest">
+                    <div>
+                      <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-4">Order Summary</h3>
+
+                      <div className="flex items-center justify-between text-sm text-on-surface-variant mb-4">
+                        <span>Order mode</span>
+                        <span className="font-semibold text-on-surface">{payingOrder.orderType === 'takeout' ? 'Takeout' : `Table ${payingOrder.tableNumber}`}</span>
+                      </div>
+
+                      <div className="space-y-3 mb-6">
+                        {payingOrder.items.map((item, idx) => (
+                          <div key={idx} className="flex justify-between items-start">
+                            <div className="pr-4">
+                              <p className="font-medium text-on-surface">{item.quantity}x {item.name}</p>
+                              {item.variantName && <p className="text-xs text-on-surface-variant">{item.variantName}</p>}
+                            </div>
+                            <span className="font-medium text-on-surface shrink-0">₱{(item.price * item.quantity).toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      {/* Calculations (Estimating tax from total if not stored perfectly, assuming 8% tax) */}
+                      <div className="border-t border-outline-variant pt-4 space-y-2">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-on-surface-variant">Subtotal</span>
+                          <span className="text-on-surface">₱{(payingOrder.total / 1.08).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-on-surface-variant">Tax (8%)</span>
+                          <span className="text-on-surface">₱{(payingOrder.total - (payingOrder.total / 1.08)).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-on-surface-variant">Discount</span>
+                          <span className="text-on-surface">₱{0.00.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between items-end pt-3 border-t border-outline-variant">
+                          <span className="text-lg font-bold text-on-surface">Total Due</span>
+                          <span className="text-3xl font-bold font-mono text-primary">₱{payingOrder.total.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-2">Payment Method</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod('cash')}
+                          className={`py-3 rounded-xl text-sm font-semibold transition-colors ${paymentMethod === 'cash'
+                            ? 'bg-primary text-white'
+                            : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
+                          }`}
+                        >
+                          Cash
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod('card')}
+                          className={`py-3 rounded-xl text-sm font-semibold transition-colors ${paymentMethod === 'card'
+                            ? 'bg-primary text-white'
+                            : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
+                          }`}
+                        >
+                          Card
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentMethod('digital')}
+                          className={`py-3 rounded-xl text-sm font-semibold transition-colors ${paymentMethod === 'digital'
+                            ? 'bg-primary text-white'
+                            : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
+                          }`}
+                        >
+                          Digital
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Payment Input */}
+                  <div className="flex-1 p-6 space-y-6 flex flex-col justify-between">
+                    <div>
+                      <label className="text-sm font-bold text-on-surface-variant uppercase tracking-wider mb-2 block">
+                        Amount Tendered (Cash)
+                      </label>
+                      <div className="relative mb-4">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant font-mono font-bold text-xl">
+                          ₱
+                        </span>
+                        <input
+                          type="number"
+                          value={paymentReceivedStr}
+                          onChange={(e) => setPaymentReceivedStr(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full bg-white border-2 border-outline-variant pl-10 pr-4 py-4 rounded-xl font-mono text-2xl font-bold focus:outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 transition-all"
+                          autoFocus
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-2 mb-6">
+                        {[50, 100, 500, 1000].map(amount => (
+                          <button
+                            key={amount}
+                            onClick={() => {
+                              const current = parseFloat(paymentReceivedStr) || 0
+                              setPaymentReceivedStr((current + amount).toString())
+                            }}
+                            className="py-3 bg-primary/5 hover:bg-primary/10 rounded-xl font-mono font-bold text-sm transition-colors text-primary border border-primary/20"
+                          >
+                            +₱{amount}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => setPaymentReceivedStr(payingOrder.total.toString())}
+                          className="col-span-4 py-3 border-2 border-primary text-primary hover:bg-primary/10 rounded-xl font-bold transition-colors"
+                        >
+                          Exact Amount
+                        </button>
+                      </div>
+
+                      <div className="bg-surface-container-low p-5 rounded-2xl flex justify-between items-center border border-outline-variant">
+                        <span className="font-bold text-on-surface-variant text-lg">Change:</span>
+                        <span className={`text-3xl font-mono font-bold ${
+                          (parseFloat(paymentReceivedStr) || 0) >= payingOrder.total ? 'text-green-600' : 'text-red-500'
+                        }`}>
+                          ₱{Math.max(0, (parseFloat(paymentReceivedStr) || 0) - payingOrder.total).toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      disabled={isProcessingPayment || (paymentMethod === 'cash' && (parseFloat(paymentReceivedStr) || 0) < payingOrder.total)}
+                      onClick={async () => {
+                        const paymentReceived = paymentMethod === 'cash' ? (parseFloat(paymentReceivedStr) || 0) : payingOrder.total
+                        const change = paymentMethod === 'cash' ? Math.max(0, paymentReceived - payingOrder.total) : 0
+                        if (paymentMethod === 'cash' && paymentReceived < payingOrder.total) return
+                        setIsProcessingPayment(true)
+                        try {
+                          const tableId = tablesWithOptimistic.find(t => t.tableNumber === payingOrder.tableNumber)?.id
+                          await processPaymentAndActivateOrder(
+                            payingOrder.id,
+                            paymentMethod === 'digital' ? 'qrph' : paymentMethod,
+                            0,
+                            payingOrder.total,
+                            tableId
+                          )
+                          const transaction: Transaction = {
+                            id: payingOrder.id,
+                            items: payingOrder.items,
+                            subtotal: payingOrder.total / 1.08,
+                            tax: payingOrder.total - (payingOrder.total / 1.08),
+                            discount: 0,
+                            total: payingOrder.total,
+                            paymentReceived,
+                            change,
+                            timestamp: new Date(),
+                            paymentMethod,
+                            orderType: payingOrder.orderType
+                          }
+                          addTransaction(transaction)
+                          setQrReceiptTransaction(transaction)
+                        } catch (error) {
+                          console.error('Error processing QR payment:', error)
+                          alert('Failed to process payment. Check console.')
+                        } finally {
+                          setIsProcessingPayment(false)
+                        }
+                      }}
+                      className={`w-full py-5 rounded-2xl font-bold text-xl transition-all flex justify-center items-center gap-2 shadow-sm ${
+                        isProcessingPayment || (parseFloat(paymentReceivedStr) || 0) < payingOrder.total
+                          ? 'bg-surface-variant text-on-surface-variant cursor-not-allowed opacity-70'
+                          : 'bg-primary text-white hover:bg-primary/90 active:scale-95 hover:shadow-lg hover:shadow-primary/20'
+                      }`}
+                    >
+                      {isProcessingPayment ? (
+                        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <>
+                          <span className="material-symbols-outlined text-2xl">check_circle</span>
+                          Confirm Payment
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )

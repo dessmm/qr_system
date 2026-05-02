@@ -6,7 +6,7 @@ import { useCart } from '@/app/cashier/context/CartContext'
 
 interface ProductCardProps {
   product: MenuItem
-  onCartPulse?: () => void // callback to animate cart icon in nav
+  onCartPulse?: () => void
 }
 
 export function ProductCard({ product, onCartPulse }: ProductCardProps) {
@@ -14,21 +14,18 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
   const [imgError, setImgError] = useState(false)
   const [added, setAdded] = useState(false)
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0)
-  // Debounce guard — tracks the last add timestamp per card instance
   const lastAddedAt = useRef(0)
 
   const variants = product.variants ?? []
   const selectedVariant = variants[selectedVariantIndex]
   const displayPrice = selectedVariant?.price ?? product.price
 
-  // Fix #8: treat zero-price items as unavailable
   const isUnavailable = !product.available || displayPrice === 0
 
-  // Fix #5: debounced add with 500ms guard, 800ms feedback badge
   const handleAdd = useCallback(() => {
     if (isUnavailable) return
     const now = Date.now()
-    if (now - lastAddedAt.current < 500) return // debounce 500ms
+    if (now - lastAddedAt.current < 500) return
     lastAddedAt.current = now
 
     addItem({
@@ -41,20 +38,22 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
       variantName: selectedVariant?.name,
     })
 
-    // Show "Added" badge for 800ms
     setAdded(true)
     setTimeout(() => setAdded(false), 800)
-
-    // Pulse the nav cart icon if parent passed the callback
     onCartPulse?.()
   }, [isUnavailable, addItem, product, displayPrice, selectedVariant, onCartPulse])
 
-  // Fix #4: derive initials from product name for placeholder
   const initials = product.name
     .split(' ')
     .slice(0, 2)
     .map(w => w[0]?.toUpperCase() ?? '')
     .join('')
+
+  // ── 86 badge logic ────────────────────────────────────────────────────────
+  // Show badge only when stock is tracked OR item is sold out.
+  // If stock is undefined (unlimited) and item is available → no badge at all.
+  const showBadge = product.stock !== undefined || !product.available
+  const badgeLabel = !product.available ? 'Sold Out' : String(product.stock)
 
   return (
     <div
@@ -63,8 +62,8 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
       onClick={isUnavailable ? undefined : handleAdd}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          if (!isUnavailable) handleAdd();
+          e.preventDefault()
+          if (!isUnavailable) handleAdd()
         }
       }}
       className={`group bg-white rounded-2xl p-4 shadow-sm border border-surface-container-high hover:shadow-md hover:border-primary/30 transition-all duration-200 text-left w-full relative ${
@@ -73,7 +72,6 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
     >
       {/* Image / Placeholder */}
       <div className="relative aspect-square rounded-xl overflow-hidden mb-3 bg-surface-container-low">
-        {/* Fix #4: show placeholder div on error instead of broken image */}
         {imgError || !product.image ? (
           <div className="w-full h-full flex items-center justify-center bg-gray-100">
             <span className="text-2xl font-bold text-gray-400 select-none">{initials}</span>
@@ -87,16 +85,14 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
           />
         )}
 
-        {/* Fix #8: Unavailable overlay for zero-price or unavailable items */}
+        {/* Unavailable overlay */}
         {isUnavailable && (
           <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-            <span className="text-white font-semibold text-sm">
-              {product.price === 0 ? 'Unavailable' : 'Unavailable'}
-            </span>
+            <span className="text-white font-semibold text-sm">Unavailable</span>
           </div>
         )}
 
-        {/* Fix #5: "Added" feedback badge */}
+        {/* "Added" feedback badge */}
         {added && (
           <div className="absolute inset-0 bg-green-500/90 flex items-center justify-center rounded-xl animate-fade-in">
             <span className="text-white font-bold flex items-center gap-1 text-sm">
@@ -106,24 +102,32 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
           </div>
         )}
 
-        {/* 86 / Sold Out Toggle */}
-        <button
-          onClick={async (e) => {
-            e.stopPropagation()
-            try {
-              await saveMenuItem({ id: product.id, available: !product.available })
-            } catch (err) {
-              console.error('Failed to update availability', err)
-            }
-          }}
-          className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-bold shadow-sm transition-colors ${
-            product.available
-              ? 'bg-white text-on-surface-variant hover:bg-red-100 hover:text-red-700'
-              : 'bg-red-500 text-white hover:bg-red-600'
-          }`}
-        >
-          {product.available ? '86' : 'Sold Out'}
-        </button>
+        {/* ── Stock count / Sold Out badge ─────────────────────────────────
+             Only renders when:
+             - stock is a tracked number (e.g. 86, 12, 3)  → shows the count
+             - item is marked unavailable                   → shows "Sold Out"
+             Hidden entirely when stock is undefined (unlimited) + available
+        ─────────────────────────────────────────────────────────────────── */}
+        {showBadge && (
+          <button
+            onClick={async (e) => {
+              e.stopPropagation()
+              try {
+                await saveMenuItem({ id: product.id, available: !product.available })
+              } catch (err) {
+                console.error('Failed to update availability', err)
+              }
+            }}
+            title={product.available ? 'Click to mark as sold out' : 'Click to mark as available'}
+            className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-bold shadow-sm transition-colors ${
+              product.available
+                ? 'bg-white text-on-surface-variant hover:bg-red-100 hover:text-red-700'
+                : 'bg-red-500 text-white hover:bg-red-600'
+            }`}
+          >
+            {badgeLabel}
+          </button>
+        )}
       </div>
 
       {/* Info */}

@@ -31,6 +31,8 @@ export interface Transaction {
   paymentReceived: number
   change: number
   customer?: CustomerInfo
+  orderType?: 'dine-in' | 'takeout'
+  reference?: string
   timestamp: Date
   paymentMethod: 'cash' | 'card' | 'digital'
 }

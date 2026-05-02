@@ -6,6 +6,8 @@ import Link from 'next/link'
 import { listenToOrder, Order, OrderStatus } from '@/lib/data'
 
 const STATUS_STEPS: { key: OrderStatus; label: string; icon: string; desc: string }[] = [
+  { key: 'pending_payment', label: 'Awaiting Acceptance', icon: 'schedule', desc: 'Your order is waiting for cashier acceptance.' },
+  { key: 'accepted', label: 'Ready for Payment', icon: 'payments', desc: 'Your order has been accepted. Please complete payment.' },
   { key: 'new', label: 'Order Received', icon: 'check_circle', desc: 'Your order has been sent to the kitchen.' },
   { key: 'in-progress', label: 'Preparing', icon: 'local_fire_department', desc: 'The kitchen is working on your meal.' },
   { key: 'ready', label: 'Ready!', icon: 'restaurant', desc: 'Your order is ready to be served.' },
@@ -13,7 +15,7 @@ const STATUS_STEPS: { key: OrderStatus; label: string; icon: string; desc: strin
 ]
 
 function getStepIndex(status: OrderStatus) {
-  return STATUS_STEPS.findIndex(s => s.key === status)
+  return Math.max(0, STATUS_STEPS.findIndex(s => s.key === status))
 }
 
 export default function StatusPage() {
@@ -62,6 +64,7 @@ export default function StatusPage() {
               <h2 className="text-headline-md font-bold">Order #{order.id}</h2>
             </div>
             <span className={`px-3 py-1 rounded-full text-label-sm font-bold uppercase ${
+              order.status === 'pending_payment' ? 'bg-orange-100 text-orange-700' :
               order.status === 'ready' ? 'bg-green-100 text-green-700' :
               order.status === 'in-progress' ? 'bg-orange-100 text-primary' :
               order.status === 'served' ? 'bg-secondary-container text-on-secondary-container' :
@@ -118,6 +121,16 @@ export default function StatusPage() {
             </div>
           </div>
         </div>
+
+        {order.status === 'accepted' && (
+          <Link
+            href={`/checkout/${order.id}`}
+            className="w-full inline-flex items-center justify-center gap-2 bg-primary text-white py-4 rounded-2xl font-bold active:scale-95 transition-all shadow-lg shadow-primary/10"
+          >
+            <span className="material-symbols-outlined">payments</span>
+            Complete Payment
+          </Link>
+        )}
 
         {/* BUG-23: Call waiter button with feedback instead of being a no-op */}
         <button

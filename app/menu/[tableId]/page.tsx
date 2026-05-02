@@ -209,7 +209,7 @@ export default function MenuPage() {
     return cart.find(c => c.id === cartItemId)?.quantity || 0
   }
 
-  // ─── Place order ───────────────────────────────────────────────────────────
+  // ─── Place order (creates pending_payment order → redirects to checkout) ──
   const placeOrder = async () => {
     if (cart.length === 0) return
     setIsPlacing(true)
@@ -226,18 +226,23 @@ export default function MenuPage() {
         {
           tableNumber,
           items: orderItems,
-          status: 'new',
+          status: 'new',           // addOrder overrides this to 'pending_payment'
+          paymentStatus: 'pending',
           specialInstructions,
           createdAt: Date.now(),
           updatedAt: Date.now(),
           total: cartTotal,
           orderType: 'dine-in'
         },
-        table?.id ?? undefined
+        undefined  // Table is marked occupied at payment time, not here
       )
 
       if (orderId) {
-        try { sessionStorage.setItem('lastOrderId', orderId) } catch (_) {}
+        try {
+          sessionStorage.setItem('lastOrderId', orderId)
+          // Persist tableId so the checkout page can activate the table after payment
+          if (table?.id) sessionStorage.setItem(`tableId_${orderId}`, table.id)
+        } catch (_) {}
         setLastOrderId(orderId)
         setCart([])
         setSpecialInstructions('')
@@ -249,13 +254,9 @@ export default function MenuPage() {
       }
     } catch (error) {
       setIsPlacing(false)
-<<<<<<< HEAD
-      setOrderError('Failed to place order. Please try again.')
-=======
       const message = error instanceof Error ? error.message : String(error)
-      alert(`Failed to place order. ${message}`)
+      setOrderError(`Failed to place order. ${message}`)
       console.error('[placeOrder] error:', error)
->>>>>>> alas/alas_features
     }
   }
 
@@ -787,10 +788,10 @@ export default function MenuPage() {
 
               {/* Icon + heading */}
               <div className="confirm-icon">
-                <span className="material-symbols-outlined">receipt_long</span>
+                <span className="material-symbols-outlined">payment</span>
               </div>
-              <h2 className="confirm-title">Confirm Your Order</h2>
-              <p className="confirm-subtitle">Table {tableNumber} · {cartCount} item{cartCount !== 1 ? 's' : ''}</p>
+              <h2 className="confirm-title">Pay to Place Order</h2>
+              <p className="confirm-subtitle">Table {tableNumber} · {cartCount} item{cartCount !== 1 ? 's' : ''} · Payment required</p>
 
               {/* Item list */}
               <div className="confirm-items">
@@ -847,8 +848,8 @@ export default function MenuPage() {
               {/* Actions */}
               <button onClick={placeOrder} disabled={isPlacing} className="confirm-btn-primary">
                 {isPlacing
-                  ? <><span className="material-symbols-outlined animate-spin">progress_activity</span>Placing Order...</>
-                  : <><span className="material-symbols-outlined">check_circle</span>Yes, Place Order</>
+                  ? <><span className="material-symbols-outlined animate-spin">progress_activity</span>Preparing Checkout...</>
+                  : <><span className="material-symbols-outlined">payment</span>Proceed to Payment</>
                 }
               </button>
               <button

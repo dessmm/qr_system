@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { listenToOrder, listenToSettings, updateOrderStatus, Order, AppSettings, DEFAULT_SETTINGS, clearTableAfterPayment, listenToMenu, MenuItem } from '@/lib/data'
+import { listenToOrder, listenToSettings, Order, AppSettings, DEFAULT_SETTINGS, listenToMenu, MenuItem, processPaymentAndActivateOrder, getTables } from '@/lib/data'
 
 export default function CheckoutPage() {
   const params = useParams()
@@ -175,18 +175,33 @@ export default function CheckoutPage() {
     setShowSummaryModal(false)
     setIsProcessing(true)
     try {
+      // Simulate payment processing (replace with real gateway in production)
       await new Promise(r => setTimeout(r, 1500))
-      if (order?.status && order.status !== 'served') {
-        await updateOrderStatus(orderId, 'in-progress')
-      }
-      if (order?.tableNumber) {
-        const { getTables } = await import('@/lib/data')
+
+      // Look up the tableId stored when the order was created
+      let tableId: string | undefined
+      try {
+        tableId = sessionStorage.getItem(`tableId_${orderId}`) ?? undefined
+      } catch (_) {}
+
+      // If not in sessionStorage, look it up from Firestore
+      if (!tableId && order?.tableNumber) {
         const tables = await getTables()
-        const table = tables.find(t => t.tableNumber === order.tableNumber)
-        if (table) {
-          await clearTableAfterPayment(table.id)
-        }
+        tableId = tables.find(t => t.tableNumber === order.tableNumber)?.id
       }
+
+      // Atomically: mark payment paid + push order to kitchen + mark table occupied
+      await processPaymentAndActivateOrder(
+        orderId,
+        paymentMethod,
+        tipAmount,
+        grandTotal,
+        tableId
+      )
+
+      // Clean up session storage
+      try { sessionStorage.removeItem(`tableId_${orderId}`) } catch (_) {}
+
       router.push(`/confirmation/${orderId}`)
     } catch {
       setIsProcessing(false)
@@ -196,8 +211,8 @@ export default function CheckoutPage() {
 
   const paymentMethodLabel = {
     qrph: 'QR PH',
-    card: 'Card',
-    cash: 'Cash (Pay when served)',
+    card: 'Debit / Credit Card',
+    cash: 'Cash',
   }
 
   const paymentMethodIcon = {
@@ -426,8 +441,8 @@ export default function CheckoutPage() {
             <div className="space-y-2">
               {[
                 { key: 'qrph', label: 'QR PH', description: 'Scan to pay instantly with your banking app.', icon: 'qr_code_scanner' },
-                { key: 'card', label: 'Card', description: 'Pay securely with credit or debit card.', icon: 'credit_card' },
-                { key: 'cash', label: 'Cash (Pay when served)', description: 'Settle in cash when your order is served.', icon: 'payments' },
+                { key: 'card', label: 'Debit / Credit Card', description: 'Pay securely with credit or debit card.', icon: 'credit_card' },
+                { key: 'cash', label: 'Cash', description: 'Pay in cash at the counter now — order sent to kitchen after.', icon: 'payments' },
               ].map((method) => (
                 <button
                   key={method.key}
@@ -473,7 +488,7 @@ export default function CheckoutPage() {
                 <div className="text-3xl font-black text-primary leading-none mt-0.5">₱{grandTotal.toFixed(2)}</div>
               </div>
               <span className="text-zinc-400 text-xs mb-0.5 italic">
-                {paymentMethod === 'cash' ? 'Cash due when served' : paymentMethod === 'qrph' ? 'QR PH selected' : 'Card selected'}
+                Order sent to kitchen after payment
               </span>
             </div>
             <button
@@ -484,11 +499,12 @@ export default function CheckoutPage() {
               {isProcessing ? (
                 <>
                   <span className="material-symbols-outlined animate-spin" style={{ fontSize: 20 }}>progress_activity</span>
-                  Processing…
+                  Processing Payment…
                 </>
               ) : (
                 <>
-                  <span>{paymentMethod === 'qrph' ? 'Pay with QR PH' : paymentMethod === 'card' ? 'Pay with Card' : 'Confirm Cash Payment'}</span>
+                  <span className="material-symbols-outlined" style={{ fontSize: 20 }}>lock</span>
+                  <span>{paymentMethod === 'qrph' ? 'Pay with QR PH' : paymentMethod === 'card' ? 'Pay with Card' : 'Pay with Cash'}</span>
                   <span className="material-symbols-outlined" style={{ fontSize: 20 }}>arrow_forward</span>
                 </>
               )}

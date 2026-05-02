@@ -19,18 +19,19 @@ interface CartSummaryProps {
 }
 
 export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [], selectedTableId, onTableSelect }: CartSummaryProps) {
-  const { items, getSubtotal, getTax, getTotal, clearCart, customerInfo } = useCart()
+  const { items, getSubtotal, clearCart, customerInfo } = useCart()
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'digital'>('cash')
   const [paymentReceived, setPaymentReceived] = useState('')
   const [showReceipt, setShowReceipt] = useState(false)
   const [lastTransaction, setLastTransaction] = useState<Transaction | null>(null)
 
+  const [orderType, setOrderType] = useState<'dine-in' | 'takeout'>('dine-in')
+  const [takeoutReference, setTakeoutReference] = useState('')
   const [discountType, setDiscountType] = useState<'none' | 'senior' | 'pwd' | 'custom'>('none')
   const [promoCode, setPromoCode] = useState('')
   const [isPromoApplied, setIsPromoApplied] = useState(false)
   
   const [isConfirming, setIsConfirming] = useState(false)
-  const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const subtotal = getSubtotal()
   
@@ -51,13 +52,23 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
 
   const cartEmpty = items.length === 0
   const cashInsufficient = paymentMethod === 'cash' && payment < total
-  const isDisabled = cartEmpty || cashInsufficient
+  const requiresTable = orderType === 'dine-in'
+  const isDisabled = cartEmpty || cashInsufficient || (requiresTable && !selectedTableId)
 
   const disabledHint = cartEmpty
     ? 'Add items to the cart first'
     : cashInsufficient
     ? 'Cash received is less than the total'
+    : requiresTable && !selectedTableId
+    ? 'Select a table for dine-in orders'
     : ''
+
+  const selectedTable = selectedTableId ? tables.find(t => t.id === selectedTableId) : null
+  const orderLabel = orderType === 'takeout'
+    ? 'Takeout'
+    : selectedTable
+    ? `Table ${selectedTable.tableNumber}`
+    : 'Dine In'
 
   const cartPanelRef = useRef<HTMLDivElement>(null)
 
@@ -69,22 +80,28 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
     })
   }, [])
 
-  const handleCheckout = useCallback(() => {
+  const handleCheckout = useCallback(async () => {
     if (cartEmpty) return
     if (paymentMethod === 'cash' && payment < total) return
-    if (!selectedTableId) {
+    if (requiresTable && !selectedTableId) {
       alert('Please select a table before checkout')
       return
     }
 
     setIsConfirming(true)
-    
-    confirmTimeoutRef.current = setTimeout(async () => {
-      setIsConfirming(false)
-      const selectedTable = tables.find(t => t.id === selectedTableId)
-      if (!selectedTable) return
+
+    try {
+      const selectedTable = selectedTableId ? tables.find(t => t.id === selectedTableId) : null
+      if (requiresTable && !selectedTable) return
 
       const effectivePayment = paymentMethod === 'cash' ? payment : total
+      const transactionCustomer =
+        orderType === 'takeout' && takeoutReference
+          ? { name: takeoutReference, phone: '', email: '' }
+          : customerInfo.name
+          ? customerInfo
+          : undefined
+
       const transaction: Transaction = {
         id: `TXN-${Date.now()}`,
         items: [...items],
@@ -94,14 +111,16 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
         total,
         paymentReceived: effectivePayment,
         change: paymentMethod === 'cash' && change > 0 ? change : 0,
-        customer: customerInfo.name ? customerInfo : undefined,
+        customer: transactionCustomer,
+        orderType,
+        reference: takeoutReference,
         timestamp: new Date(),
         paymentMethod
       }
 
       try {
         const orderId = await addOrder({
-          tableNumber: selectedTable.tableNumber,
+          tableNumber: orderType === 'takeout' ? 0 : selectedTable!.tableNumber,
           items: items.map(i => ({
             id: i.id,
             name: i.name,
@@ -112,14 +131,16 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
             ...(i.notes && { notes: i.notes })
           })),
           status: 'new',
+          paymentStatus: 'paid',
+          paymentMethod: paymentMethod === 'cash' ? 'cash' : 'card', // rough mapping for cashier
           total,
-          orderType: 'dine-in',
+          orderType,
           createdAt: Date.now(),
           updatedAt: Date.now()
-        })
+        }, undefined, { preserveStatus: true })
 
-        if (orderId) {
-          await updateTableStatus(selectedTableId, 'occupied', orderId)
+        if (orderId && selectedTable) {
+          await updateTableStatus(selectedTableId!, 'occupied', orderId)
         }
 
         setLastTransaction(transaction)
@@ -130,13 +151,12 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
         console.error('Checkout error:', err)
         alert('Checkout failed. Please try again.')
       }
-    }, 5000)
-  }, [cartEmpty, payment, total, items, subtotal, tax, computedDiscount, customerInfo, paymentMethod, change, onComplete, selectedTableId, tables, clearCart])
+    } finally {
+      setIsConfirming(false)
+    }
+  }, [cartEmpty, payment, total, items, subtotal, tax, computedDiscount, customerInfo, paymentMethod, change, onComplete, orderType, takeoutReference, requiresTable, selectedTableId, tables, clearCart])
 
   const cancelConfirmation = useCallback(() => {
-    if (confirmTimeoutRef.current) {
-      clearTimeout(confirmTimeoutRef.current)
-    }
     setIsConfirming(false)
   }, [])
 
@@ -173,16 +193,28 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentMethod, isDisabled, addToPayment])
 
-  const handleNewTransaction = () => {
+  const handleNewTransaction = useCallback(() => {
     setShowReceipt(false)
     setLastTransaction(null)
     setPaymentReceived('')
     setDiscountType('none')
     setPromoCode('')
     setIsPromoApplied(false)
+    setOrderType('dine-in')
+    setTakeoutReference('')
     clearCart()
     onTableSelect?.(null)
-  }
+  }, [clearCart, onTableSelect])
+
+  useEffect(() => {
+    if (!showReceipt || !lastTransaction) return
+
+    const timer = window.setTimeout(() => {
+      handleNewTransaction()
+    }, 4000)
+
+    return () => window.clearTimeout(timer)
+  }, [showReceipt, lastTransaction, handleNewTransaction])
 
   // ── Empty cart state ──────────────────────────────────────────────────────
   if (items.length === 0) {
@@ -210,6 +242,13 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
         <div className="p-4 space-y-3">
           <div className="text-center border-b border-outline-variant pb-3 mb-3">
             <p className="text-xs text-on-surface-variant">{lastTransaction.timestamp.toLocaleString()}</p>
+          </div>
+
+          <div className="flex justify-between items-center text-sm text-on-surface-variant mb-3">
+            <span>{lastTransaction.orderType === 'takeout' ? 'Takeout Order' : 'Dine-in Order'}</span>
+            {lastTransaction.reference && (
+              <span className="font-medium text-on-surface">{lastTransaction.reference}</span>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -270,6 +309,61 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
   // ── Main cart/payment view ────────────────────────────────────────────────
   return (
     <div ref={cartPanelRef} className="bg-white rounded-2xl shadow-sm border border-surface-container-low">
+      {/* Order Type */}
+      <div className="p-4 border-b border-surface-container-low space-y-4">
+        <div>
+          <p className="text-sm font-medium text-on-surface-variant mb-2">Customer Type</p>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setOrderType('dine-in')
+                setTakeoutReference('')
+              }}
+              className={`py-3 rounded-xl text-sm font-semibold transition-colors ${orderType === 'dine-in'
+                ? 'bg-primary text-white'
+                : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
+              }`}
+            >
+              Dine In
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOrderType('takeout')
+                onTableSelect?.(null)
+              }}
+              className={`py-3 rounded-xl text-sm font-semibold transition-colors ${orderType === 'takeout'
+                ? 'bg-primary text-white'
+                : 'bg-surface-container-high text-on-surface hover:bg-surface-container-highest'
+              }`}
+            >
+              Takeout
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between text-sm text-on-surface-variant">
+          <span>Order mode</span>
+          <span className="font-semibold text-on-surface">{orderLabel}</span>
+        </div>
+
+        {orderType === 'takeout' && (
+          <div>
+            <label className="text-sm font-medium text-on-surface-variant block mb-2">
+              Customer name or order number (optional)
+            </label>
+            <input
+              type="text"
+              value={takeoutReference}
+              onChange={e => setTakeoutReference(e.target.value)}
+              placeholder="Customer name or order number"
+              className="w-full px-3 py-3 border border-surface-container-high rounded-xl bg-surface-container-low focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/20 text-sm"
+            />
+          </div>
+        )}
+      </div>
+
       {/* Cart Items */}
       <div className="p-4 border-b border-surface-container-low">
         <h3 className="font-semibold text-on-surface mb-3">Order Items ({items.length})</h3>
@@ -294,7 +388,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
             <select
               value={discountType}
               onChange={(e) => {
-                setDiscountType(e.target.value as any)
+                setDiscountType(e.target.value as 'none' | 'senior' | 'pwd' | 'custom')
                 setIsPromoApplied(false)
               }}
               className="px-2 py-1 bg-surface-container-low rounded border border-surface-container-high text-sm focus:outline-none focus:border-primary"
@@ -347,7 +441,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
 
       {/* Payment Section */}
       <div className="p-4 border-t border-surface-container-low space-y-3">
-        {/* Table Selection */}
+        {orderType === 'dine-in' && (
         <div>
           <label className="text-sm font-medium text-on-surface-variant block mb-2">Assign to Table</label>
           <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto pr-1">
@@ -372,8 +466,9 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
             <p className="text-xs text-primary mt-1">✓ Table selected</p>
           )}
         </div>
+        )}
 
-        {/* Payment Method */}
+        {/* Payment Method */} 
         <div>
           <label className="text-sm font-medium text-on-surface-variant block mb-2">Payment Method</label>
           <div className="grid grid-cols-3 gap-2">

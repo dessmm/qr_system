@@ -18,7 +18,7 @@ import { db } from './firebase';
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type OrderStatus = 'new' | 'in-progress' | 'ready' | 'served'
+export type OrderStatus = 'pending_payment' | 'accepted' | 'new' | 'in-progress' | 'ready' | 'served'
 
 export interface AppSettings {
   [key: string]: string | undefined;
@@ -222,6 +222,7 @@ export interface MenuItem {
   tags?: string[]
   variants?: MenuItemVariant[]
   available: boolean
+  stock?: number
 }
 
 export const CATEGORIES = ['Appetizers', 'Mains', 'Drinks', 'Desserts', 'Sides', 'Snacks'] as const
@@ -241,6 +242,11 @@ export async function saveMenuItem(item: Partial<MenuItem>) {
   try {
     if (item.id) {
       const { id, ...data } = item
+      // Auto mark as unavailable when stock hits 0
+      if (data.stock !== undefined && data.stock <= 0) {
+        data.available = false
+        data.stock = 0
+      }
       await updateDoc(doc(db, MENU_COL, id), data)
     } else {
       await addDoc(collection(db, MENU_COL), { ...item, available: true })
@@ -283,34 +289,69 @@ export interface Order {
   updatedAt: number
   total: number
   orderType: 'dine-in' | 'takeout'
+  // ── Pay-as-you-order fields ──────────────────────────────────────────────
+  paymentStatus: 'pending' | 'paid'
+  paymentMethod?: 'qrph' | 'card' | 'cash'
+  tipAmount?: number
+  grandTotal?: number
+  paidAt?: number
 }
 
 /**
- * Creates a new order and atomically marks the table as 'occupied'
- * in a single Firestore batch write — eliminates the race condition
- * where navigation away from the page could abort the table update.
+ * Creates a new order, atomically marks the table as 'occupied',
+ * and decrements stock for each ordered item in a single batch write.
+ *
+ * Stock lifecycle:
+ *   stock: 5  →  customer orders 2  →  stock: 3
+ *   stock: 1  →  customer orders 1  →  stock: 0  →  available: false (sold out)
  */
 export async function addOrder(
   order: Omit<Order, 'id'>,
-  tableId?: string
+  tableId?: string,
+  options?: { preserveStatus?: boolean }
 ): Promise<string | null> {
   try {
     const now = Date.now()
     const batch = writeBatch(db)
 
+    // ── 1. Create the order (pending_payment — NOT yet visible to kitchen) ───
     const orderRef = doc(collection(db, ORDERS_COL))
-    batch.set(orderRef, { ...order, createdAt: now, updatedAt: now })
+    batch.set(orderRef, {
+      ...order,
+      status: options?.preserveStatus ? (order.status ?? 'pending_payment') : 'pending_payment',
+      paymentStatus: options?.preserveStatus ? (order.paymentStatus ?? 'pending') : 'pending',
+      createdAt: now,
+      updatedAt: now,
+    })
 
-    if (tableId) {
-      batch.update(doc(db, TABLES_COL, tableId), {
-        status: 'occupied',
-        currentOrderId: orderRef.id,
-        updatedAt: now
+    // NOTE: Table is NOT marked occupied here. It is marked occupied only after
+    // the customer confirms payment in processPaymentAndActivateOrder().
+    // This prevents the table map from showing "occupied" for unpaid orders.
+
+    // ── 2. Decrement stock for each ordered item ─────────────────────────────
+    // Stock is reserved at order creation time (before payment) to prevent
+    // overselling when multiple customers order the same item simultaneously.
+    for (const cartItem of order.items) {
+      // Handle variant ids like "productId::16oz" — extract the base menu id
+      const menuId = cartItem.baseId ?? cartItem.id.split('::')[0]
+      const menuSnap = await getDoc(doc(db, MENU_COL, menuId))
+      if (!menuSnap.exists()) continue
+
+      const menuData = menuSnap.data() as MenuItem
+      // Skip items with unlimited stock (stock field not set)
+      if (menuData.stock === undefined) continue
+
+      const newStock = Math.max(0, menuData.stock - cartItem.quantity)
+      batch.update(doc(db, MENU_COL, menuId), {
+        stock: newStock,
+        // Auto mark sold out when stock reaches 0
+        ...(newStock <= 0 ? { available: false } : {}),
       })
     }
 
+    // ── 3. Commit everything atomically ─────────────────────────────────────
     await batch.commit()
-    console.log('[addOrder] batch committed — orderId:', orderRef.id, '| tableId:', tableId ?? 'none')
+    console.log('[addOrder] batch committed — orderId:', orderRef.id, '(pending payment)')
     return orderRef.id
   } catch (error) {
     console.error('Error adding order:', error)
@@ -338,7 +379,6 @@ export async function updateOrderStatus(orderId: string, status: OrderStatus) {
 
 /**
  * Kitchen "Mark Served" — marks the ORDER as served and ensures the table is occupied.
- * The table is occupied when the order is placed, but this ensures it's occupied when served.
  *
  * Lifecycle summary:
  *   new  →  in-progress  →  ready  →  served   (kitchen pipeline)
@@ -346,7 +386,6 @@ export async function updateOrderStatus(orderId: string, status: OrderStatus) {
  */
 export async function markOrderServed(orderId: string): Promise<void> {
   try {
-    // First, find the table associated with this order
     const tablesSnap = await getDocs(collection(db, TABLES_COL))
     const tableDoc = tablesSnap.docs.find(doc => doc.data().currentOrderId === orderId)
     
@@ -356,7 +395,6 @@ export async function markOrderServed(orderId: string): Promise<void> {
       updatedAt: Date.now()
     })
     
-    // Ensure table is occupied
     if (tableDoc) {
       batch.update(doc(db, TABLES_COL, tableDoc.id), {
         status: 'occupied',
@@ -368,6 +406,53 @@ export async function markOrderServed(orderId: string): Promise<void> {
     console.log('[markOrderServed] order served and table occupied')
   } catch (error) {
     console.error('Error marking order served:', error)
+  }
+}
+
+/**
+ * PAY-AS-YOU-ORDER: Called after the customer confirms payment.
+ *
+ * Atomically:
+ *   1. Sets paymentStatus → 'paid', status → 'new' (now visible in kitchen)
+ *   2. Records paymentMethod, tipAmount, grandTotal, paidAt timestamp
+ *   3. Marks the table as 'occupied' so it can't be double-seated
+ */
+export async function processPaymentAndActivateOrder(
+  orderId: string,
+  paymentMethod: 'qrph' | 'card' | 'cash',
+  tipAmount: number,
+  grandTotal: number,
+  tableId?: string
+): Promise<void> {
+  try {
+    const now = Date.now()
+    const batch = writeBatch(db)
+
+    // Promote order to kitchen queue
+    batch.update(doc(db, ORDERS_COL, orderId), {
+      paymentStatus: 'paid',
+      paymentMethod,
+      tipAmount,
+      grandTotal,
+      paidAt: now,
+      status: 'new',
+      updatedAt: now,
+    })
+
+    // Mark table occupied
+    if (tableId) {
+      batch.update(doc(db, TABLES_COL, tableId), {
+        status: 'occupied',
+        currentOrderId: orderId,
+        updatedAt: now,
+      })
+    }
+
+    await batch.commit()
+    console.log('[processPaymentAndActivateOrder] payment confirmed, order activated:', orderId)
+  } catch (error) {
+    console.error('Error processing payment and activating order:', error)
+    throw error
   }
 }
 

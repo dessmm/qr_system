@@ -1,15 +1,11 @@
 'use client'
 
-<<<<<<< HEAD
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { db } from '@/lib/firebase'
 import {
   collection, query, where, orderBy, limit,
-  getDocs, startAfter, QueryDocumentSnapshot
+  getDocs, startAfter, onSnapshot, QueryDocumentSnapshot
 } from 'firebase/firestore'
-=======
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
->>>>>>> alas/alas_features
 import {
   listenToOrders,
   listenToSettings,
@@ -24,30 +20,43 @@ import {
   TableStatus,
 } from '@/lib/data'
 
+// --- Types --------------------------------------------------------------------
+interface ToastItem {
+  id: string
+  message: string
+  onUndo?: () => void
+  duration?: number
+}
+
 // --- Constants ----------------------------------------------------------------
-const LIVE_PAGE_SIZE    = 9
+const LIVE_PAGE_SIZE = 9
 const HISTORY_PAGE_SIZE = 20
 
 const STATUS_COLORS: Record<OrderStatus, string> = {
-  'new':         'border-slate-200',
+  'pending_payment': 'border-slate-200',
+  'accepted': 'border-slate-200',
+  'new': 'border-slate-200',
   'in-progress': 'border-blue-400',
-  'ready':       'border-green-400',
-  'served':      'border-slate-200 opacity-60',
+  'ready': 'border-green-400',
+  'served': 'border-slate-200 opacity-60',
 }
 
 const STATUS_HEADER: Record<OrderStatus, string> = {
-  'new':         'bg-slate-50',
+  'pending_payment': 'bg-slate-50',
+  'accepted': 'bg-slate-50',
+  'new': 'bg-slate-50',
   'in-progress': 'bg-blue-50',
-  'ready':       'bg-green-50',
-  'served':      'bg-slate-50',
+  'ready': 'bg-green-50',
+  'served': 'bg-slate-50',
 }
 
-<<<<<<< HEAD
 const STATUS_BG: Record<OrderStatus, string> = {
-  'new':         'bg-white',
+  'pending_payment': 'bg-white',
+  'accepted': 'bg-white',
+  'new': 'bg-white',
   'in-progress': 'bg-[#eff6ff]',
-  'ready':       'bg-[#f0fdf4]',
-  'served':      'bg-white',
+  'ready': 'bg-[#f0fdf4]',
+  'served': 'bg-white',
 }
 
 // --- Helpers ------------------------------------------------------------------
@@ -77,74 +86,64 @@ function TargetTimer({ createdAt, status, targetMs, isUrgent }: { createdAt: num
     return () => clearInterval(id)
   }, [createdAt, status, targetMs])
   return <span className={isUrgent ? 'text-red-600 font-black' : ''}>{timeStr}</span>
-=======
-// ─── Global tick (single interval for all timers) ────────────────────────────
-function useNow(intervalMs = 1000) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs)
-    return () => clearInterval(id)
-  }, [intervalMs])
-  return now
-}
-
-function elapsed(createdAt: number, now: number): string {
-  const secs = Math.floor((now - createdAt) / 1000)
-  const m = Math.floor(secs / 60).toString().padStart(2, '0')
-  const s = (secs % 60).toString().padStart(2, '0')
-  return `${m}:${s}`
-}
-
-// ─── Undo Toast ───────────────────────────────────────────────────────────────
-type ToastItem = { id: string; message: string; onUndo: () => void }
-
-function UndoToast({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: string) => void }) {
-  const [progress, setProgress] = useState(100)
-  useEffect(() => {
-    const start = Date.now()
-    const duration = 4000
-    const tick = setInterval(() => {
-      const pct = Math.max(0, 100 - ((Date.now() - start) / duration) * 100)
-      setProgress(pct)
-      if (pct === 0) { clearInterval(tick); onDismiss(toast.id) }
-    }, 50)
-    return () => clearInterval(tick)
-  }, [toast.id, onDismiss])
-
-  return (
-    <div className="flex items-center gap-3 bg-slate-900 text-white rounded-xl px-4 py-3 shadow-xl min-w-[280px] overflow-hidden relative">
-      <div
-        className="absolute bottom-0 left-0 h-0.5 bg-orange-400 transition-none"
-        style={{ width: `${progress}%` }}
-      />
-      <span className="text-sm flex-1">{toast.message}</span>
-      <button
-        onClick={() => { toast.onUndo(); onDismiss(toast.id) }}
-        className="text-orange-400 font-bold text-sm hover:text-orange-300 transition-colors"
-      >
-        Undo
-      </button>
-      <button
-        onClick={() => onDismiss(toast.id)}
-        className="text-slate-400 hover:text-white transition-colors"
-      >
-        <span className="material-symbols-outlined text-base">close</span>
-      </button>
-    </div>
-  )
->>>>>>> alas/alas_features
 }
 
 function ToastContainer({ toasts, onDismiss }: { toasts: ToastItem[]; onDismiss: (id: string) => void }) {
   if (toasts.length === 0) return null
   return (
-    <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-50 flex flex-col gap-2 items-end">
-      {toasts.map(t => <UndoToast key={t.id} toast={t} onDismiss={onDismiss} />)}
+    <div className="fixed bottom-20 md:bottom-6 right-4 md:right-6 z-50 flex flex-col gap-2 items-end pointer-events-none">
+      {toasts.map(t => (
+        <UndoToast key={t.id} toast={t} onDismiss={onDismiss} />
+      ))}
     </div>
   )
 }
 
-// ─── Hold-to-confirm button (improved for mobile) ───────────────────────────────────────────────────
+function UndoToast({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: string) => void }) {
+  const [progress, setProgress] = useState(100)
+  const duration = toast.duration || 5000
+
+  useEffect(() => {
+    const start = Date.now()
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start
+      const pct = Math.max(0, 100 - (elapsed / duration) * 100)
+      setProgress(pct)
+      if (pct <= 0) {
+        clearInterval(id)
+        onDismiss(toast.id)
+      }
+    }, 50)
+    return () => clearInterval(id)
+  }, [toast.id, duration, onDismiss])
+
+  return (
+    <div className="bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-4 min-w-[280px] animate-in fade-in slide-in-from-right-4 pointer-events-auto border border-white/10">
+      <div className="flex-1">
+        <p className="text-sm font-medium">{toast.message}</p>
+        <div className="w-full h-1 bg-white/10 rounded-full mt-2 overflow-hidden">
+          <div className="h-full bg-primary transition-all duration-75" style={{ width: `${progress}%` }} />
+        </div>
+      </div>
+      {toast.onUndo && (
+        <button
+          onClick={() => {
+            toast.onUndo?.()
+            onDismiss(toast.id)
+          }}
+          className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs font-bold uppercase tracking-wider transition-colors"
+        >
+          Undo
+        </button>
+      )}
+      <button onClick={() => onDismiss(toast.id)} className="text-white/40 hover:text-white transition-colors">
+        <span className="material-symbols-outlined text-sm">close</span>
+      </button>
+    </div>
+  )
+}
+
+// ─── Hold-to-confirm button ───────────────────────────────────────────────────
 function HoldToConfirm({ onConfirm, label }: { onConfirm: () => void; label: string }) {
   const [holding, setHolding] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -173,7 +172,6 @@ function HoldToConfirm({ onConfirm, label }: { onConfirm: () => void; label: str
     setProgress(0)
   }, [])
 
-  // Add haptic feedback for mobile
   useEffect(() => {
     if (holding && 'vibrate' in navigator) {
       navigator.vibrate(50)
@@ -193,7 +191,6 @@ function HoldToConfirm({ onConfirm, label }: { onConfirm: () => void; label: str
         style={{ WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}
         aria-label={`Hold to confirm: ${label}`}
       >
-        {/* Fill bar */}
         <div
           className="absolute inset-0 bg-green-400 origin-left transition-none"
           style={{ transform: `scaleX(${progress / 100})` }}
@@ -238,103 +235,170 @@ function LiveClock({ now }: { now: number }) {
   )
 }
 
+// ─── KitchenView type — now includes 'tables' ────────────────────────────────
 type KitchenView = 'live' | 'history' | 'tables'
 
 // --- Page ---------------------------------------------------------------------
-export default function KitchenPage() {
-  const [orders, setOrders]     = useState<Order[]>([])
-  const [view, setView]         = useState<KitchenView>('live')
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-<<<<<<< HEAD
-  const prevLiveCount           = useRef(0)
+function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs)
+    return () => clearInterval(id)
+  }, [intervalMs])
+  return now
+}
 
-  const [tableFilter,   setTableFilter]   = useState<string>('')
-  const [statusFilter,  setStatusFilter]  = useState<string>('all')
+export default function KitchenPage() {
+  const now = useNow(1000)
+  const [orders, setOrders] = useState<Order[]>([])
+  const [view, setView] = useState<KitchenView>('live')
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+
+  // ── MIGRATED: Tables state ────────────────────────────────────────────────
+  const [tables, setTables] = useState<Table[]>([])
+
+  // Filtering & Sorting
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedStatus, setSelectedStatus] = useState<OrderStatus | 'all'>('all')
+  const [sortBy, setSortBy] = useState<'time' | 'table' | 'urgent'>('time')
+  const [tableFilter, setTableFilter] = useState('')
   const [urgencyFilter, setUrgencyFilter] = useState<UrgencyLevel>('all')
 
-  const [historyOrders,    setHistoryOrders]    = useState<Order[]>([])
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
-  const [hasMoreHistory,   setHasMoreHistory]   = useState(true)
-  const historyInitialized = useRef(false)
+  // Toasts & Offline
+  const [toasts, setToasts] = useState<ToastItem[]>([])
+  const [offline, setOffline] = useState(false)
 
+  const addToast = useCallback((message: string, onUndo?: () => void) => {
+    const id = Math.random().toString(36).slice(2, 9)
+    setToasts(prev => [...prev, { id, message, onUndo }])
+  }, [])
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id))
+  }, [])
+
+  // History State
+  const [historyOrders, setHistoryOrders] = useState<Order[]>([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [hasMoreHistory, setHasMoreHistory] = useState(true)
+  // lastDocRef / loadingRef / hasMoreRef are used only by the "load more" paginator
   const lastDocRef = useRef<QueryDocumentSnapshot | null>(null)
   const loadingRef = useRef(false)
   const hasMoreRef = useRef(true)
-
   const observerRef = useRef<IntersectionObserver | null>(null)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
-  const [visibleCount,   setVisibleCount]   = useState(LIVE_PAGE_SIZE)
-  const [isLoadingMore,  setIsLoadingMore]  = useState(false)
+  // Live Infinite Scroll State
+  const [visibleCount, setVisibleCount] = useState(LIVE_PAGE_SIZE)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [newTicketCount, setNewTicketCount] = useState(0)
-  const liveSentinelRef  = useRef<HTMLDivElement | null>(null)
-  const liveObserverRef  = useRef<IntersectionObserver | null>(null)
+  const liveSentinelRef = useRef<HTMLDivElement | null>(null)
+  const liveObserverRef = useRef<IntersectionObserver | null>(null)
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
   const prevFilterKeyRef = useRef('')
 
+  // UI States
   const [checkedItems, setCheckedItems] = useState<Record<string, Record<string, boolean>>>({})
   const [flashingOrders, setFlashingOrders] = useState<Set<string>>(new Set())
   const prevLiveIdsRef = useRef<Set<string>>(new Set())
 
   const targetPrepTimeMs = parseInt(settings.targetPrepTime || '15') * 60 * 1000
 
-  // Real-time listeners
+  // ── MIGRATED: Added listenToTables alongside existing listeners ───────────
   useEffect(() => {
-    const unsubOrders   = listenToOrders(setOrders)
+    const unsubOrders = listenToOrders(setOrders)
     const unsubSettings = listenToSettings(setSettings)
-    return () => { unsubOrders(); unsubSettings() }
+    const unsubTables = listenToTables(setTables)
+    return () => {
+      unsubOrders()
+      unsubSettings()
+      unsubTables()
+    }
   }, [])
 
-  const liveOrders = orders
-    .filter(o => o.status !== 'served')
-    .sort((a, b) => a.createdAt - b.createdAt)
+  // --- Computed Orders --------------------------------------------------------
+  const liveOrders = useMemo(() => {
+    let filtered = orders.filter(o => o.status !== 'served' && o.status !== 'pending_payment')
 
-  const filteredOrders = useMemo(() => {
-    return liveOrders.filter(o => {
-      if (tableFilter.trim() !== '' && String(o.tableNumber) !== tableFilter.trim()) return false
-      if (statusFilter !== 'all' && o.status !== statusFilter) return false
-      if (urgencyFilter !== 'all' && getUrgency(o.createdAt, targetPrepTimeMs) !== urgencyFilter) return false
-      return true
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      filtered = filtered.filter(o =>
+        o.id.toLowerCase().includes(q) ||
+        o.tableNumber.toString().includes(q) ||
+        o.items.some(i => i.name.toLowerCase().includes(q))
+      )
+    }
+
+    if (tableFilter.trim() !== '') {
+      filtered = filtered.filter(o => String(o.tableNumber) === tableFilter.trim())
+    }
+
+    if (selectedStatus !== 'all') {
+      filtered = filtered.filter(o => o.status === selectedStatus)
+    }
+
+    if (urgencyFilter !== 'all') {
+      filtered = filtered.filter(o => getUrgency(o.createdAt, targetPrepTimeMs) === urgencyFilter)
+    }
+
+    filtered.sort((a, b) => {
+      if (sortBy === 'urgent') {
+        const aUrgent = now - a.createdAt > targetPrepTimeMs
+        const bUrgent = now - b.createdAt > targetPrepTimeMs
+        if (aUrgent && !bUrgent) return -1
+        if (!aUrgent && bUrgent) return 1
+      }
+      if (sortBy === 'table') {
+        return a.tableNumber - b.tableNumber
+      }
+      return a.createdAt - b.createdAt
     })
-  }, [liveOrders, tableFilter, statusFilter, urgencyFilter, targetPrepTimeMs])
 
-  const hasActiveFilter = tableFilter.trim() !== '' || statusFilter !== 'all' || urgencyFilter !== 'all'
+    return filtered
+  }, [orders, searchQuery, selectedStatus, tableFilter, urgencyFilter, sortBy, now, targetPrepTimeMs])
 
-  const clearFilters = () => {
+  const filteredOrders = liveOrders
+
+  const hasActiveFilter = searchQuery || tableFilter.trim() !== '' || selectedStatus !== 'all' || urgencyFilter !== 'all'
+
+  const clearFilters = useCallback(() => {
+    setSearchQuery('')
     setTableFilter('')
-    setStatusFilter('all')
+    setSelectedStatus('all')
     setUrgencyFilter('all')
-  }
+  }, [])
 
-  const visibleOrders = filteredOrders.slice(0, visibleCount)
-  const allLoaded     = visibleCount >= filteredOrders.length
+  const visibleOrders = useMemo(() => liveOrders.slice(0, visibleCount), [liveOrders, visibleCount])
+  const allLoaded = visibleCount >= liveOrders.length
 
-  // Reset scroll + visible window whenever filters change
   useEffect(() => {
-    const key = `${tableFilter}|${statusFilter}|${urgencyFilter}`
+    const key = `${tableFilter}|${selectedStatus}|${urgencyFilter}|${searchQuery}`
     if (key === prevFilterKeyRef.current) return
     prevFilterKeyRef.current = key
     setVisibleCount(LIVE_PAGE_SIZE)
     setNewTicketCount(0)
     gridContainerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [tableFilter, statusFilter, urgencyFilter])
+  }, [tableFilter, selectedStatus, urgencyFilter, searchQuery])
 
-  // New-ticket arrival pill
   useEffect(() => {
-    const scrollTop = window.scrollY || document.documentElement.scrollTop
-    if (scrollTop < 100) {
-      setNewTicketCount(0)
-      window.scrollTo({ top: 0, behavior: 'smooth' })
-    } else {
-      setNewTicketCount(c => c + 1)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveOrders.length])
+    const currentIds = new Set(orders.filter(o => o.status !== 'served').map(o => o.id))
+    const newIds = orders.filter(o => o.status === 'new' && !prevLiveIdsRef.current.has(o.id) && prevLiveIdsRef.current.size > 0)
 
-  // Live-feed IntersectionObserver — re-attach whenever visibleCount changes
+    if (newIds.length > 0) {
+      new Audio('/chime.mp3').play().catch(() => { })
+      setFlashingOrders(new Set(newIds.map(o => o.id)))
+      setTimeout(() => setFlashingOrders(new Set()), 5000)
+
+      const scrollTop = window.scrollY || document.documentElement.scrollTop
+      if (scrollTop > 300) {
+        setNewTicketCount(c => c + newIds.length)
+      }
+    }
+    prevLiveIdsRef.current = currentIds
+  }, [orders])
+
   useEffect(() => {
     if (view !== 'live') return
-
     liveObserverRef.current?.disconnect()
 
     if (allLoaded || isLoadingMore) {
@@ -349,21 +413,140 @@ export default function KitchenPage() {
         setTimeout(() => {
           setVisibleCount(c => c + LIVE_PAGE_SIZE)
           setIsLoadingMore(false)
-        }, 300)
+        }, 400)
       },
-      { root: null, rootMargin: '0px 0px 200px 0px', threshold: 0.1 }
+      { root: null, rootMargin: '0px 0px 400px 0px', threshold: 0.01 }
     )
 
     if (liveSentinelRef.current) {
       liveObserverRef.current.observe(liveSentinelRef.current)
     }
 
-    return () => {
-      liveObserverRef.current?.disconnect()
-      liveObserverRef.current = null
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => liveObserverRef.current?.disconnect()
   }, [visibleCount, allLoaded, isLoadingMore, view])
+
+  // ── Real-time listener for Order History ──────────────────────────────────
+  // Seeds the initial list AND keeps it live — any order marked "served"
+  // anywhere (kitchen, cashier) appears here instantly.
+  useEffect(() => {
+    const q = query(
+      collection(db, 'orders'),
+      where('status', '==', 'served'),
+      orderBy('createdAt', 'desc'),
+      limit(HISTORY_PAGE_SIZE)
+    )
+
+    setIsLoadingHistory(true)
+    const unsub = onSnapshot(
+      q,
+      snap => {
+        const incoming = snap.docs.map(d => ({ id: d.id, ...d.data() } as Order))
+        // Store the last cursor so pagination can continue from here
+        if (snap.docs.length > 0) lastDocRef.current = snap.docs[snap.docs.length - 1]
+        setHistoryOrders(prev => {
+          // Merge: keep any older pages the user already loaded, update/prepend new docs
+          const existingIds = new Set(incoming.map(o => o.id))
+          const olderPages = prev.filter(o => !existingIds.has(o.id))
+          return [...incoming, ...olderPages]
+        })
+        setHasMoreHistory(snap.docs.length === HISTORY_PAGE_SIZE)
+        hasMoreRef.current = snap.docs.length === HISTORY_PAGE_SIZE
+        setIsLoadingHistory(false)
+      },
+      err => {
+        console.error('[History] Real-time listener error:', err)
+        setIsLoadingHistory(false)
+      }
+    )
+    return () => unsub()
+  }, []) // runs once on mount — listener stays alive for the page lifetime
+
+  // ── "Load more" paginator — fetches pages older than the live window ───────
+  const fetchHistoryOrders = useCallback(async (isNextPage: boolean) => {
+    if (!isNextPage) return // first page is handled by the live listener above
+    if (loadingRef.current || !hasMoreRef.current) return
+    loadingRef.current = true
+    setIsLoadingHistory(true)
+    try {
+      const constraints = [
+        where('status', '==', 'served'),
+        orderBy('createdAt', 'desc'),
+        limit(HISTORY_PAGE_SIZE),
+        ...(lastDocRef.current ? [startAfter(lastDocRef.current)] : []),
+      ]
+      const snap = await getDocs(query(collection(db, 'orders'), ...constraints))
+      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Order))
+      const more = snap.docs.length === HISTORY_PAGE_SIZE
+      hasMoreRef.current = more
+      setHasMoreHistory(more)
+      if (snap.docs.length > 0) lastDocRef.current = snap.docs[snap.docs.length - 1]
+      setHistoryOrders(prev => [...prev, ...fetched])
+    } catch (err) {
+      console.error('[History] Fetch error:', err)
+    } finally {
+      loadingRef.current = false
+      setIsLoadingHistory(false)
+    }
+  }, [])
+
+  // ── History scroll sentinel — loads older pages when user scrolls down ──────
+  useEffect(() => {
+    if (observerRef.current) observerRef.current.disconnect()
+
+    observerRef.current = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasMoreHistory && !isLoadingHistory) {
+          fetchHistoryOrders(true)
+        }
+      },
+      { root: null, rootMargin: '0px 0px 200px 0px', threshold: 0.01 }
+    )
+
+    // Observe the sentinel if it's already in the DOM
+    if (sentinelRef.current) {
+      observerRef.current.observe(sentinelRef.current)
+    }
+
+    return () => observerRef.current?.disconnect()
+  }, [hasMoreHistory, isLoadingHistory, fetchHistoryOrders])
+
+  const advance = useCallback(async (order: Order) => {
+    const nextMap: Record<OrderStatus, OrderStatus> = {
+      'pending_payment': 'new',
+      'accepted': 'new',
+      'new': 'in-progress',
+      'in-progress': 'ready',
+      'ready': 'served',
+      'served': 'served',
+    }
+    const nextStatus = nextMap[order.status]
+    const prevStatus = order.status
+    const statusLabels: Record<OrderStatus, string> = {
+      'pending_payment': 'Pending',
+      'accepted': 'Accepted',
+      'new': 'New',
+      'in-progress': 'Prep',
+      'ready': 'Ready',
+      'served': 'Served',
+    }
+
+    try {
+      if (nextStatus === 'served') {
+        await markOrderServed(order.id)
+      } else {
+        await updateOrderStatus(order.id, nextStatus)
+      }
+
+      addToast(
+        `Table ${order.tableNumber} → ${statusLabels[nextStatus]}`,
+        async () => {
+          await updateOrderStatus(order.id, prevStatus)
+        }
+      )
+    } catch (err) {
+      console.error('[Advance] Error:', err)
+    }
+  }, [addToast])
 
   const avgPrepMin = useMemo(() => {
     const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000
@@ -374,390 +557,11 @@ export default function KitchenPage() {
     )
   }, [orders])
 
-  useEffect(() => {
-    const currentIds = new Set(liveOrders.map(o => o.id))
-    const newIds = liveOrders.filter(o => !prevLiveIdsRef.current.has(o.id) && prevLiveIdsRef.current.size > 0).map(o => o.id)
-    
-    if (newIds.length > 0) {
-      new Audio('/chime.mp3').play().catch(() => {})
-      setFlashingOrders(new Set(newIds))
-      setTimeout(() => setFlashingOrders(new Set()), 3000)
-    }
-    prevLiveIdsRef.current = currentIds
-  }, [liveOrders])
-
-  const fetchHistoryOrders = useCallback(async (isNextPage: boolean) => {
-    if (loadingRef.current || (!hasMoreRef.current && isNextPage)) return
-
-    loadingRef.current = true
-    setIsLoadingHistory(true)
-
-    try {
-      const constraints = [
-        where('status', 'in', ['served', 'completed']),
-        orderBy('createdAt', 'desc'),
-        limit(HISTORY_PAGE_SIZE),
-        ...(isNextPage && lastDocRef.current ? [startAfter(lastDocRef.current)] : []),
-      ]
-
-      const snap = await getDocs(query(collection(db, 'orders'), ...constraints))
-      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() } as Order))
-
-      const more = snap.docs.length === HISTORY_PAGE_SIZE
-      hasMoreRef.current = more
-      setHasMoreHistory(more)
-
-      if (snap.docs.length > 0) {
-        lastDocRef.current = snap.docs[snap.docs.length - 1]
-      }
-
-      setHistoryOrders(prev => isNextPage ? [...prev, ...fetched] : fetched)
-    } catch (err) {
-      console.error('[KitchenHistory] fetch error:', err)
-    } finally {
-      loadingRef.current = false
-      setIsLoadingHistory(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (view !== 'history') return
-    if (historyInitialized.current) return
-
-    historyInitialized.current = true
-    lastDocRef.current = null
-    hasMoreRef.current = true
-    setHasMoreHistory(true)
-    fetchHistoryOrders(false)
-  }, [view, fetchHistoryOrders])
-
-  useEffect(() => {
-    if (view !== 'history') {
-      observerRef.current?.disconnect()
-      observerRef.current = null
-      return
-    }
-
-    observerRef.current = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) fetchHistoryOrders(true)
-      },
-      { root: null, rootMargin: '40px', threshold: 0 }
-    )
-
-    if (sentinelRef.current) {
-      observerRef.current.observe(sentinelRef.current)
-    }
-
-    return () => {
-      observerRef.current?.disconnect()
-      observerRef.current = null
-    }
-  }, [view, fetchHistoryOrders])
-
-  const advance = async (order: Order) => {
-=======
-  const [toasts, setToasts]     = useState<ToastItem[]>([])
-  const [offline, setOffline]   = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedStatus, setSelectedStatus] = useState<OrderStatus | 'all'>('all')
-  const [sortBy, setSortBy] = useState<'time' | 'table' | 'urgent'>('time')
-  const [tables, setTables] = useState<Table[]>([])
-
-  // Single global tick — shared by all timers and urgent checks
-  const now = useNow(1000)
-
-  // Track previous order count to detect new arrivals
-  const prevCountRef = useRef(0)
-
-  // ── Sound cue for new orders ───────────────────────────────────────────────
-  const playNewOrderSound = useCallback(() => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)()
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.connect(gain)
-      gain.connect(ctx.destination)
-      osc.type = 'sine'
-      osc.frequency.setValueAtTime(880, ctx.currentTime)
-      osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.15)
-      gain.gain.setValueAtTime(0.4, ctx.currentTime)
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4)
-      osc.start(ctx.currentTime)
-      osc.stop(ctx.currentTime + 0.4)
-    } catch (_) { /* audio unavailable */ }
-  }, [])
-
-  useEffect(() => {
-    let unsubOrders: (() => void) | undefined
-    let unsubSettings: (() => void) | undefined
-    let unsubTables: (() => void) | undefined
-    try {
-      unsubOrders = listenToOrders((incoming) => {
-        setOffline(false)
-        // Detect truly new orders (new status, not seen before)
-        const newCount = incoming.filter(o => o.status === 'new').length
-        if (newCount > prevCountRef.current) playNewOrderSound()
-        prevCountRef.current = newCount
-        setOrders(incoming)
-      })
-      unsubSettings = listenToSettings(setSettings)
-      unsubTables = listenToTables(setTables)
-    } catch (err) {
-      console.error('Listener error:', err)
-      setOffline(true)
-    }
-
-    // Browser online/offline events as a fallback signal
-    const handleOffline = () => setOffline(true)
-    const handleOnline  = () => setOffline(false)
-    window.addEventListener('offline', handleOffline)
-    window.addEventListener('online',  handleOnline)
-
-    // Keyboard shortcuts
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      
-      switch (e.key.toLowerCase()) {
-        case 'b':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            setBulkActionMode(prev => !prev)
-          }
-          break
-        case 'escape':
-          if (bulkActionMode) {
-            clearSelection()
-          }
-          break
-        case 's':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            // Focus search input
-            const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement
-            searchInput?.focus()
-          }
-          break
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      unsubOrders?.()
-      unsubSettings?.()
-      unsubTables?.()
-      window.removeEventListener('offline', handleOffline)
-      window.removeEventListener('online',  handleOnline)
-    }
-  }, [playNewOrderSound])
-
-  // ── Toast helpers ──────────────────────────────────────────────────────────
-  const dismissToast = useCallback((id: string) => {
-    setToasts(prev => prev.filter(t => t.id !== id))
-  }, [])
-
-  const addToast = useCallback((message: string, onUndo: () => void) => {
-    const id = Math.random().toString(36).slice(2)
-    setToasts(prev => [...prev, { id, message, onUndo }])
-  }, [])
-
-  // ── Order advancement with undo ────────────────────────────────────────────
-  const advance = useCallback(async (order: Order) => {
->>>>>>> alas/alas_features
-    const next: Record<OrderStatus, OrderStatus> = {
-      'new':         'in-progress',
-      'in-progress': 'ready',
-      'ready':       'served',
-      'served':      'served',
-    }
-    const nextStatus = next[order.status]
-<<<<<<< HEAD
-=======
-    const prevStatus = order.status
-
-    const statusLabels: Record<OrderStatus, string> = {
-      'new':         'New',
-      'in-progress': 'In Progress',
-      'ready':       'Ready',
-      'served':      'Served',
-    }
-
-    // Optimistic update
->>>>>>> alas/alas_features
-    if (nextStatus === 'served') {
-      await markOrderServed(order.id)
-    } else {
-      await updateOrderStatus(order.id, nextStatus)
-    }
-
-    // Show undo toast (except served→served which is a no-op)
-    if (nextStatus !== prevStatus) {
-      addToast(
-        `Table ${order.tableNumber} → ${statusLabels[nextStatus]}`,
-        async () => {
-          // Revert
-          await updateOrderStatus(order.id, prevStatus)
-        }
-      )
-    }
-  }, [addToast])
-
-  const liveOrders = useMemo(() => {
-    let filtered = orders.filter(o => o.status !== 'served')
-    
-    // Apply search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      filtered = filtered.filter(order => 
-        order.id.toLowerCase().includes(query) ||
-        order.tableNumber.toString().includes(query) ||
-        order.items.some(item => item.name.toLowerCase().includes(query))
-      )
-    }
-    
-    // Apply status filter
-    if (selectedStatus !== 'all') {
-      filtered = filtered.filter(order => order.status === selectedStatus)
-    }
-    
-    // Apply sorting
-    filtered.sort((a, b) => {
-      if (sortBy === 'urgent') {
-        const aUrgent = now - a.createdAt > 15 * 60 * 1000
-        const bUrgent = now - b.createdAt > 15 * 60 * 1000
-        if (aUrgent && !bUrgent) return -1
-        if (!aUrgent && bUrgent) return 1
-      }
-      if (sortBy === 'table') {
-        return a.tableNumber - b.tableNumber
-      }
-      // Default: time (oldest first)
-      return a.createdAt - b.createdAt
-    })
-    
-    return filtered
-  }, [orders, searchQuery, selectedStatus, sortBy, now])
-
-  const historyOrders = useMemo(() => {
-    let filtered = orders.filter(o => o.status === 'served')
-    
-    // Apply search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      filtered = filtered.filter(order => 
-        order.id.toLowerCase().includes(query) ||
-        order.tableNumber.toString().includes(query) ||
-        order.items.some(item => item.name.toLowerCase().includes(query))
-      )
-    }
-    
-    return filtered.sort((a, b) => b.createdAt - a.createdAt)
-  }, [orders, searchQuery])
-
-  // ── Bulk actions ──────────────────────────────────────────────────────────
-  const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set())
-  const [bulkActionMode, setBulkActionMode] = useState(false)
-
-  const toggleOrderSelection = useCallback((orderId: string) => {
-    setSelectedOrders(prev => {
-      const next = new Set(prev)
-      if (next.has(orderId)) {
-        next.delete(orderId)
-      } else {
-        next.add(orderId)
-      }
-      return next
-    })
-  }, [])
-
-  const clearSelection = useCallback(() => {
-    setSelectedOrders(new Set())
-    setBulkActionMode(false)
-  }, [])
-
-  const bulkAdvance = useCallback(async (targetStatus: OrderStatus) => {
-    const selectedOrderObjects = liveOrders.filter(order => selectedOrders.has(order.id))
-    if (selectedOrderObjects.length === 0) return
-
-    const statusLabels: Record<OrderStatus, string> = {
-      'new': 'New',
-      'in-progress': 'In Progress', 
-      'ready': 'Ready',
-      'served': 'Served',
-    }
-
-    // Optimistic updates
-    const updates = selectedOrderObjects.map(async (order) => {
-      if (targetStatus === 'served') {
-        await markOrderServed(order.id)
-      } else {
-        await updateOrderStatus(order.id, targetStatus)
-      }
-    })
-
-    await Promise.all(updates)
-
-    addToast(
-      `${selectedOrderObjects.length} orders → ${statusLabels[targetStatus]}`,
-      async () => {
-        // Bulk revert
-        const reverts = selectedOrderObjects.map(order => 
-          updateOrderStatus(order.id, order.status)
-        )
-        await Promise.all(reverts)
-      }
-    )
-
-    clearSelection()
-  }, [liveOrders, selectedOrders, addToast, clearSelection])
-
-  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      
-      switch (e.key.toLowerCase()) {
-        case 'b':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            setBulkActionMode(prev => !prev)
-          }
-          break
-        case 'escape':
-          if (bulkActionMode) {
-            clearSelection()
-          }
-          break
-        case 's':
-          if (e.ctrlKey || e.metaKey) {
-            e.preventDefault()
-            // Focus search input
-            const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement
-            searchInput?.focus()
-          }
-          break
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [bulkActionMode, clearSelection])
-
-  // Compute avg prep time from history
-  const avgPrepTime = (() => {
-    const served = historyOrders.filter(o => o.status === 'served')
-    if (served.length === 0) return '—'
-    const avg = served.reduce((sum, o) => sum + (o.updatedAt - o.createdAt), 0) / served.length
-    return `${Math.round(avg / 60000)}m`
-  })()
-
-  const activeCount = liveOrders.length
-  const pendingItems = liveOrders.reduce((sum, order) => sum + order.items.length, 0)
+  const activeCount = orders.filter(o => o.status !== 'served').length
+  const pendingItems = orders.filter(o => o.status !== 'served').reduce((sum, o) => sum + o.items.length, 0)
 
   // --- Render -----------------------------------------------------------------
   return (
-<<<<<<< HEAD
     <>
       <style>{`
         @keyframes shimmer {
@@ -774,7 +578,7 @@ export default function KitchenPage() {
 
       <div className="bg-background min-h-screen font-sans">
 
-        {/* Sidebar */}
+        {/* ── MIGRATED: Sidebar — added Table Status nav item ──────────────── */}
         <aside className="hidden md:flex h-screen w-64 fixed left-0 top-0 bg-slate-50 border-r-2 border-slate-200 flex-col py-6 gap-2 z-40">
           <div className="px-6 mb-8">
             <h1 className="text-lg font-black text-slate-900">Kitchen KDS</h1>
@@ -784,8 +588,9 @@ export default function KitchenPage() {
           </div>
           <nav className="flex-1 space-y-1">
             {([
-              { key: 'live',    icon: 'monitor_heart', label: 'Live Feed' },
-              { key: 'history', icon: 'history',       label: 'Order History' },
+              { key: 'live',    icon: 'monitor_heart',    label: 'Live Feed' },
+              { key: 'history', icon: 'history',           label: 'Order History' },
+              { key: 'tables',  icon: 'table_restaurant',  label: 'Table Status' },
             ] as { key: KitchenView; icon: string; label: string }[]).map(item => (
               <button
                 key={item.key}
@@ -825,7 +630,7 @@ export default function KitchenPage() {
               <span className="text-sm text-slate-600 uppercase tracking-wide">Live</span>
             </div>
           </div>
-          <LiveClock />
+          <LiveClock now={now} />
         </header>
 
         <main className="md:ml-64 p-4 md:p-8">
@@ -833,9 +638,9 @@ export default function KitchenPage() {
           {/* Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             {[
-              { label: 'Active Tickets', value: activeCount,                                 color: 'text-slate-900' },
-              { label: 'Avg. Prep Time', value: avgPrepMin != null ? `${avgPrepMin}m` : '—', color: 'text-primary'   },
-              { label: 'Items Pending',  value: pendingItems,                                color: 'text-slate-900' },
+              { label: 'Active Tickets', value: activeCount, color: 'text-slate-900' },
+              { label: 'Avg. Prep Time', value: avgPrepMin != null ? `${avgPrepMin}m` : '—', color: 'text-primary' },
+              { label: 'Items Pending', value: pendingItems, color: 'text-slate-900' },
               { label: 'Station Status', value: 'Optimal', color: 'text-green-700', badge: true },
             ].map(stat => (
               <div key={stat.label} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
@@ -852,25 +657,18 @@ export default function KitchenPage() {
           {view === 'live' && (
             <div ref={gridContainerRef} className="relative">
 
-              {/* Info banner */}
               <div className="mb-4 flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
                 <span className="material-symbols-outlined text-blue-500 mt-0.5 flex-shrink-0">info</span>
                 <p className="text-xs text-blue-700 font-medium leading-relaxed">
                   <strong>Kitchen workflow:</strong> Mark orders In Progress → Ready → Served as you cook and deliver.
                   &ldquo;Served&rdquo; means food reached the table — the table stays{' '}
                   <strong>Occupied</strong> until the customer pays at checkout.
+                  Tap any action button, then use the <strong>Undo</strong> toast if you mis-tapped.
                 </p>
               </div>
 
-              {/*
-                Filter bar
-                - sticky top-[61px]: locks just below the header (header height = ~61px)
-                - z-20: above ticket cards, below sidebar (z-40) and header (z-30)
-                - shadow-md: adds depth so cards visually slide under the bar
-              */}
               <div className="sticky top-[61px] z-20 mb-6 flex flex-wrap items-center gap-2 p-3 bg-white border border-slate-200 rounded-xl shadow-md">
 
-                {/* Table number */}
                 <div className="relative">
                   <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold select-none">
                     Table
@@ -888,21 +686,19 @@ export default function KitchenPage() {
 
                 <div className="h-7 w-px bg-slate-200" />
 
-                {/* Status pills */}
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-slate-400 uppercase font-bold mr-1">Status</span>
                   {(['all', 'new', 'in-progress', 'ready'] as const).map(s => (
                     <button
                       key={s}
-                      onClick={() => setStatusFilter(s)}
-                      className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide transition-all ${
-                        statusFilter === s
-                          ? s === 'all'         ? 'bg-slate-800 text-white'
-                          : s === 'new'         ? 'bg-orange-500 text-white'
-                          : s === 'in-progress' ? 'bg-blue-600 text-white'
-                          :                       'bg-green-600 text-white'
+                      onClick={() => setSelectedStatus(s)}
+                      className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide transition-all ${selectedStatus === s
+                          ? s === 'all' ? 'bg-slate-800 text-white'
+                            : s === 'new' ? 'bg-orange-500 text-white'
+                              : s === 'in-progress' ? 'bg-blue-600 text-white'
+                                : 'bg-green-600 text-white'
                           : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                      }`}
+                        }`}
                     >
                       {s === 'in-progress' ? 'In Progress' : s.charAt(0).toUpperCase() + s.slice(1)}
                     </button>
@@ -911,21 +707,19 @@ export default function KitchenPage() {
 
                 <div className="h-7 w-px bg-slate-200" />
 
-                {/* Urgency pills */}
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-slate-400 uppercase font-bold mr-1">Urgency</span>
                   {(['all', 'urgent', 'warning', 'normal'] as const).map(u => (
                     <button
                       key={u}
                       onClick={() => setUrgencyFilter(u as UrgencyLevel)}
-                      className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide transition-all ${
-                        urgencyFilter === u
-                          ? u === 'all'     ? 'bg-slate-800 text-white'
-                          : u === 'urgent'  ? 'bg-red-500 text-white'
-                          : u === 'warning' ? 'bg-amber-500 text-white'
-                          :                   'bg-slate-500 text-white'
+                      className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide transition-all ${urgencyFilter === u
+                          ? u === 'all' ? 'bg-slate-800 text-white'
+                            : u === 'urgent' ? 'bg-red-500 text-white'
+                              : u === 'warning' ? 'bg-amber-500 text-white'
+                                : 'bg-slate-500 text-white'
                           : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                      }`}
+                        }`}
                     >
                       {u === 'urgent' ? '🔴 Urgent' : u === 'warning' ? '🟡 Warning' : u === 'normal' ? '🟢 Normal' : 'All'}
                     </button>
@@ -943,7 +737,6 @@ export default function KitchenPage() {
                 )}
               </div>
 
-              {/* ── Ticket grid states ────────────────────────────────────────── */}
               {liveOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-24 text-slate-400">
                   <span className="material-symbols-outlined text-6xl mb-4">restaurant</span>
@@ -963,32 +756,31 @@ export default function KitchenPage() {
                 </div>
               ) : (
                 <>
-                  {/* Ticket cards */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
                     {visibleOrders.map(order => {
-                      const isUrgent  = getUrgency(order.createdAt, targetPrepTimeMs) === 'urgent'
+                      const isUrgent = getUrgency(order.createdAt, targetPrepTimeMs) === 'urgent'
                       const isWarning = getUrgency(order.createdAt, targetPrepTimeMs) === 'warning'
-                      const isInProg  = order.status === 'in-progress'
-                      const isReady   = order.status === 'ready'
+                      const isInProg = order.status === 'in-progress'
+                      const isReady = order.status === 'ready'
                       const isFlashing = flashingOrders.has(order.id)
 
-                      const cardBorder = isUrgent  ? 'border-red-500'
-                                       : isWarning ? 'border-amber-400'
-                                       : STATUS_COLORS[order.status]
+                      const cardBorder = isUrgent ? 'border-red-500'
+                        : isWarning ? 'border-amber-400'
+                          : STATUS_COLORS[order.status]
 
                       const cardBg = isFlashing ? 'bg-orange-100 animate-pulse'
-                                   : isUrgent || isWarning ? 'bg-white' : STATUS_BG[order.status]
+                        : isUrgent || isWarning ? 'bg-white' : STATUS_BG[order.status]
 
                       const headerBg = isFlashing ? 'bg-orange-200'
-                                     : isUrgent  ? 'bg-red-50'
-                                     : isWarning ? 'bg-amber-50'
-                                     : STATUS_HEADER[order.status]
+                        : isUrgent ? 'bg-red-50'
+                          : isWarning ? 'bg-amber-50'
+                            : STATUS_HEADER[order.status]
 
-                      const statusBarColor = isUrgent  ? 'bg-red-500 animate-pulse'
-                                           : isWarning ? 'bg-amber-400'
-                                           : isInProg  ? 'bg-blue-400'
-                                           : isReady   ? 'bg-green-400'
-                                           : 'bg-slate-200'
+                      const statusBarColor = isUrgent ? 'bg-red-500 animate-pulse'
+                        : isWarning ? 'bg-amber-400'
+                          : isInProg ? 'bg-blue-400'
+                            : isReady ? 'bg-green-400'
+                              : 'bg-slate-200'
 
                       return (
                         <div
@@ -1012,9 +804,8 @@ export default function KitchenPage() {
                                   </span>
                                 )}
                               </div>
-                              <p className={`text-[10px] uppercase font-semibold mt-1 tracking-wider ${
-                                isUrgent ? 'text-red-600' : isWarning ? 'text-amber-600' : 'text-slate-400'
-                              }`}>
+                              <p className={`text-[10px] uppercase font-semibold mt-1 tracking-wider ${isUrgent ? 'text-red-600' : isWarning ? 'text-amber-600' : 'text-slate-400'
+                                }`}>
                                 {isUrgent ? 'URGENT ' : isWarning ? 'LATE ' : ''}#{order.id.slice(0, 5)}
                               </p>
                             </div>
@@ -1031,8 +822,8 @@ export default function KitchenPage() {
                               {order.items.map(item => {
                                 const isChecked = checkedItems[order.id]?.[item.id] || false
                                 return (
-                                  <li 
-                                    key={item.id} 
+                                  <li
+                                    key={item.id}
                                     className="flex gap-2 items-start cursor-pointer group"
                                     onClick={() => {
                                       setCheckedItems(prev => ({
@@ -1044,11 +835,10 @@ export default function KitchenPage() {
                                       }))
                                     }}
                                   >
-                                    <button className={`w-5 h-5 mt-0.5 flex items-center justify-center rounded transition-all flex-shrink-0 ${
-                                      isChecked 
-                                        ? 'bg-green-500 text-white' 
+                                    <button className={`w-5 h-5 mt-0.5 flex items-center justify-center rounded transition-all flex-shrink-0 ${isChecked
+                                        ? 'bg-green-500 text-white'
                                         : 'bg-slate-100 border border-slate-300 group-hover:border-slate-400'
-                                    }`}>
+                                      }`}>
                                       {isChecked && <span className="material-symbols-outlined text-[14px] font-bold">check</span>}
                                     </button>
                                     <div className="flex-1 min-w-0">
@@ -1080,9 +870,8 @@ export default function KitchenPage() {
                             )}
                           </div>
 
-                          <div className={`p-2 border-t border-slate-100 ${
-                            isInProg ? 'bg-blue-50' : isReady ? 'bg-green-50' : 'bg-slate-50'
-                          }`}>
+                          <div className={`p-2 border-t border-slate-100 ${isInProg ? 'bg-blue-50' : isReady ? 'bg-green-50' : 'bg-slate-50'
+                            }`}>
                             {order.status === 'new' && (
                               <button
                                 onClick={() => advance(order)}
@@ -1114,7 +903,6 @@ export default function KitchenPage() {
                     })}
                   </div>
 
-                  {/* Skeleton cards — shown while next batch loads */}
                   {isLoadingMore && (
                     <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mt-6">
                       {[0, 1, 2].map(i => (
@@ -1135,10 +923,7 @@ export default function KitchenPage() {
                             {[0, 1, 2].map(j => (
                               <div key={j} className="flex gap-3 items-center">
                                 <div className="skeleton-shimmer w-7 h-7 flex-shrink-0 rounded-lg" />
-                                <div
-                                  className="skeleton-shimmer h-4 flex-1"
-                                  style={{ width: `${60 + j * 10}%` }}
-                                />
+                                <div className="skeleton-shimmer h-4 flex-1" style={{ width: `${60 + j * 10}%` }} />
                               </div>
                             ))}
                           </div>
@@ -1150,12 +935,10 @@ export default function KitchenPage() {
                     </div>
                   )}
 
-                  {/* Scroll sentinel — invisible div watched by IntersectionObserver */}
                   {!allLoaded && !isLoadingMore && (
                     <div ref={liveSentinelRef} className="h-1 w-full" aria-hidden="true" />
                   )}
 
-                  {/* End-of-feed message */}
                   {allLoaded && filteredOrders.length > LIVE_PAGE_SIZE && (
                     <p className="text-center text-xs text-slate-400 py-6">
                       All active tickets loaded · {filteredOrders.length} total
@@ -1164,7 +947,6 @@ export default function KitchenPage() {
                 </>
               )}
 
-              {/* New-ticket floating pill */}
               {newTicketCount > 0 && (
                 <button
                   onClick={() => {
@@ -1251,442 +1033,108 @@ export default function KitchenPage() {
             </div>
           )}
 
+          {/* ── MIGRATED: Table Status view ───────────────────────────────────── */}
+          {view === 'tables' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-slate-900">Table Status</h2>
+                <div className="flex gap-4 text-sm">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-emerald-500 rounded-full" />
+                    <span className="text-slate-600">
+                      Available ({tables.filter(t => t.status === 'available').length})
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-red-500 rounded-full" />
+                    <span className="text-slate-600">
+                      Occupied ({tables.filter(t => t.status === 'occupied').length})
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-blue-500 rounded-full" />
+                    <span className="text-slate-600">
+                      Reserved ({tables.filter(t => t.status === 'reserved').length})
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {tables.length === 0 ? (
+                <div className="text-center py-16 text-slate-400">
+                  <span className="material-symbols-outlined text-5xl mb-3 block">table_restaurant</span>
+                  <p>No tables configured yet.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+                  {tables.map(table => (
+                    <div
+                      key={table.id}
+                      className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h3 className="font-bold text-slate-900">Table {table.tableNumber}</h3>
+                          <p className="text-xs text-slate-500">{table.name}</p>
+                        </div>
+                        <div className={`px-2 py-1 rounded-full text-xs font-bold ${
+                          table.status === 'available' ? 'bg-emerald-100 text-emerald-700' :
+                          table.status === 'occupied'  ? 'bg-red-100 text-red-700' :
+                          'bg-blue-100 text-blue-700'
+                        }`}>
+                          {table.status.toUpperCase()}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-slate-600">
+                        <div className="flex items-center gap-1">
+                          <span className="material-symbols-outlined text-sm">group</span>
+                          <span>{table.capacity}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="material-symbols-outlined text-sm">
+                            {table.shape === 'round' ? 'circle' : 'square'}
+                          </span>
+                          <span className="capitalize">{table.shape ?? 'square'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
         </main>
 
-        {/* Mobile bottom nav */}
-        <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-100 flex justify-around items-center px-4 py-3 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-50">
-          {(['live', 'history'] as KitchenView[]).map(v => (
-=======
-    <div className="bg-background min-h-screen font-sans">
-      <OfflineBanner show={offline} />
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+        {/* Toasts */}
+        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      {/* Sidebar (desktop) */}
-      <aside className="hidden md:flex h-screen w-64 fixed left-0 top-0 bg-slate-50 border-r-2 border-slate-200 flex-col py-6 gap-2 z-40">
-        <div className="px-6 mb-8">
-          <h1 className="text-lg font-black text-slate-900">Kitchen KDS</h1>
-          <p className="text-slate-500 text-xs uppercase tracking-widest font-bold">Station: {settings.stationName}</p>
-        </div>
-        <nav className="flex-1 space-y-1">
+        {/* Offline Banner */}
+        <OfflineBanner show={offline} />
+
+        {/* ── MIGRATED: Mobile bottom nav — added 'tables' tab ─────────────── */}
+        <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-100 flex justify-around items-center px-4 py-3 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-50">
           {([
-            { key: 'live',    icon: 'monitor_heart', label: 'Live Feed' },
-            { key: 'history', icon: 'history',        label: 'Order History' },
-            { key: 'tables',  icon: 'table_restaurant', label: 'Table Status' },
+            { key: 'live',    icon: 'monitor_heart',   label: 'Live Feed' },
+            { key: 'history', icon: 'history',          label: 'History' },
+            { key: 'tables',  icon: 'table_restaurant', label: 'Tables' },
           ] as { key: KitchenView; icon: string; label: string }[]).map(item => (
->>>>>>> alas/alas_features
             <button
-              key={v}
-              onClick={() => setView(v)}
+              key={item.key}
+              onClick={() => setView(item.key)}
               className={`flex flex-col items-center text-[11px] font-semibold transition-all active:scale-90 ${
-                view === v ? 'text-primary bg-orange-50 rounded-xl px-3 py-1' : 'text-slate-400'
+                view === item.key
+                  ? 'text-primary bg-orange-50 rounded-xl px-3 py-1'
+                  : 'text-slate-400'
               }`}
             >
-              <span className="material-symbols-outlined">
-                {v === 'live' ? 'monitor_heart' : 'history'}
-              </span>
-              <span className="capitalize">{v === 'live' ? 'Live Feed' : 'History'}</span>
+              <span className="material-symbols-outlined">{item.icon}</span>
+              <span>{item.label}</span>
             </button>
           ))}
         </nav>
-<<<<<<< HEAD
 
       </div>
     </>
-=======
-        <div className="px-6 mt-auto">
-          <div className="flex items-center gap-3 p-3 bg-slate-200/50 rounded-xl">
-            <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold">
-              {settings.stationName?.slice(0, 2).toUpperCase() ?? 'KD'}
-            </div>
-            <div>
-              <p className="font-bold text-slate-900">{settings.stationName ?? 'Kitchen'}</p>
-              <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Active Station</p>
-            </div>
-          </div>
-        </div>
-      </aside>
-
-      {/* Top bar */}
-      <header className="md:ml-64 sticky top-0 bg-white/90 backdrop-blur-md border-b border-slate-100 px-6 py-3 flex justify-between items-center z-30">
-        <div className="flex items-center gap-4">
-          <h2 className="text-primary font-extrabold tracking-tight text-xl">{settings.restaurantName}</h2>
-          <div className="hidden sm:flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-full">
-            <div className={`w-2 h-2 rounded-full ${offline ? 'bg-red-500' : 'bg-green-500 animate-pulse'}`} />
-            <span className="text-sm text-slate-600 uppercase tracking-wide">{offline ? 'Offline' : 'Live'}</span>
-          </div>
-        </div>
-        <LiveClock now={now} />
-      </header>
-
-      <main className="md:ml-64 p-4 md:p-8">
-        {/* Search and Filters */}
-        <div className="mb-6 space-y-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            {/* Search */}
-            <div className="relative flex-1">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 material-symbols-outlined text-slate-400">search</span>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search orders, tables, or items..."
-                className="w-full pl-10 pr-4 py-3 bg-white rounded-xl border border-slate-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all"
-              />
-            </div>
-
-            {/* Status Filter */}
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value as OrderStatus | 'all')}
-              className="px-4 py-3 bg-white rounded-xl border border-slate-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="all">All Statuses</option>
-              <option value="new">New Orders</option>
-              <option value="in-progress">In Progress</option>
-              <option value="ready">Ready</option>
-            </select>
-
-            {/* Sort */}
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as 'time' | 'table' | 'urgent')}
-              className="px-4 py-3 bg-white rounded-xl border border-slate-200 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="time">Sort by Time</option>
-              <option value="table">Sort by Table</option>
-              <option value="urgent">Urgent First</option>
-            </select>
-
-            {/* Bulk Actions Toggle */}
-            <button
-              onClick={() => setBulkActionMode(!bulkActionMode)}
-              className={`px-4 py-3 rounded-xl font-medium transition-all ${
-                bulkActionMode 
-                  ? 'bg-blue-500 text-white' 
-                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-              }`}
-              title="Toggle bulk actions mode (Ctrl+B)"
-            >
-              {bulkActionMode ? 'Exit Bulk Mode' : 'Bulk Actions'}
-            </button>
-          </div>
-
-          {/* Bulk Actions */}
-          {bulkActionMode && selectedOrders.size > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-blue-600">checklist</span>
-                  <span className="font-semibold text-blue-900">
-                    {selectedOrders.size} order{selectedOrders.size !== 1 ? 's' : ''} selected
-                  </span>
-                </div>
-                <button
-                  onClick={clearSelection}
-                  className="text-sm text-blue-600 hover:text-blue-800 underline"
-                >
-                  Clear selection
-                </button>
-              </div>
-              <div className="flex gap-3">
-                <HoldToConfirm
-                  onConfirm={() => bulkAdvance('in-progress')}
-                  label="Start Cooking"
-                />
-                <HoldToConfirm
-                  onConfirm={() => bulkAdvance('ready')}
-                  label="Mark Ready"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          {[
-            { label: 'Active Tickets', value: activeCount,  color: 'text-slate-900' },
-            { label: 'Avg. Prep Time', value: avgPrepTime,  color: 'text-primary' },
-            { label: 'Items Pending',  value: pendingItems, color: 'text-slate-900' },
-            { label: 'Station Status', value: offline ? 'Offline' : 'Optimal', color: offline ? 'text-red-700' : 'text-green-700', badge: true, badgeClass: offline ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700' },
-          ].map(stat => (
-            <div key={stat.label} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
-              <p className="text-xs text-slate-400 uppercase mb-1 tracking-wide">{stat.label}</p>
-              {stat.badge
-                ? <span className={`px-2 py-1 text-xs rounded uppercase font-bold ${stat.badgeClass}`}>{stat.value}</span>
-                : <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
-              }
-            </div>
-          ))}
-        </div>
-
-        {/* Live Feed */}
-        {view === 'live' && (
-          <>
-            <div className="mb-6 flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
-              <span className="material-symbols-outlined text-blue-500 mt-0.5 flex-shrink-0">info</span>
-              <p className="text-xs text-blue-700 font-medium leading-relaxed">
-                <strong>Kitchen workflow:</strong> Mark orders In Progress → Ready → Served as you cook and deliver.
-                &ldquo;Served&rdquo; means food reached the table — the table stays <strong>Occupied</strong> until the customer pays at checkout.
-                Tap any action button, then use the <strong>Undo</strong> toast if you mis-tapped.
-              </p>
-            </div>
-
-            {liveOrders.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-24 text-slate-400">
-                <span className="material-symbols-outlined text-6xl mb-4">restaurant</span>
-                <h3 className="text-2xl font-bold text-slate-700 mb-2">All caught up!</h3>
-                <p className="text-base">No active orders right now.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                {liveOrders.map(order => {
-                  const isUrgent = now - order.createdAt > 15 * 60 * 1000
-                  const isSelected = selectedOrders.has(order.id)
-                  return (
-                    <div
-                      key={order.id}
-                      className={`flex flex-col bg-white rounded-xl border-2 ${
-                        isSelected ? 'border-blue-500 bg-blue-50' : 
-                        isUrgent ? 'border-red-500' : STATUS_COLORS[order.status]
-                      } overflow-hidden shadow-sm transition-all ${isUrgent ? 'shadow-red-100' : ''} cursor-pointer`}
-                      onClick={() => bulkActionMode && toggleOrderSelection(order.id)}
-                    >
-                      {/* Status bar */}
-                      <div className={`h-1.5 w-full ${
-                        order.status === 'new'         ? 'bg-slate-200' :
-                        order.status === 'in-progress' ? 'bg-orange-400' : 'bg-green-500'
-                      } ${isUrgent ? 'bg-red-500 animate-pulse' : ''}`} />
-
-                      {/* Header */}
-                      <div className={`p-4 border-b border-slate-100 flex justify-between items-start ${STATUS_HEADER[order.status]} ${isUrgent ? 'bg-red-50' : ''}`}>
-                        <div className="flex items-start gap-3">
-                          {bulkActionMode && (
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => toggleOrderSelection(order.id)}
-                              className="mt-1 w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          )}
-                          <div>
-                            <p className="text-xl font-bold text-slate-900">Table {order.tableNumber}</p>
-                            <p className={`text-xs uppercase font-semibold tracking-wide ${isUrgent ? 'text-red-600' : 'text-slate-400'}`}>
-                              {isUrgent ? (
-                                <span className="inline-flex items-center gap-1">
-                                  <span className="material-symbols-outlined text-xs">warning</span>
-                                  Urgent ·
-                                </span>
-                              ) : ''}
-                              #{order.id.slice(0, 6)}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          {/* aria-hidden so screen readers don't announce every second */}
-                          <p
-                            className={`font-black text-2xl tabular-nums ${isUrgent ? 'text-red-600' : 'text-slate-900'}`}
-                            aria-hidden="true"
-                          >
-                            {order.status === 'served' ? elapsed(order.createdAt, order.createdAt) : elapsed(order.createdAt, now)}
-                          </p>
-                          <p className="text-xs text-slate-400 uppercase">Elapsed</p>
-                          {/* Screen-reader-friendly static label */}
-                          <span className="sr-only">
-                            Order placed {new Date(order.createdAt).toLocaleTimeString()}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Items */}
-                      <div className="p-4 flex-1 space-y-3">
-                        <ul className="space-y-2">
-                          {order.items.map(item => (
-                            <li key={item.id} className="flex gap-3 items-start">
-                              <span className={`w-8 h-8 flex items-center justify-center font-bold rounded-lg text-sm flex-shrink-0 ${
-                                item.quantity >= 3
-                                  ? 'bg-orange-500 text-white'
-                                  : item.quantity === 2
-                                  ? 'bg-amber-400 text-amber-900'
-                                  : 'bg-slate-900 text-white'
-                              }`}>
-                                {item.quantity}
-                              </span>
-                              <div>
-                                <span className="font-semibold text-slate-800">{item.name}</span>
-                                {item.variantName && (
-                                  <span className="ml-1.5 text-xs text-slate-400">({item.variantName})</span>
-                                )}
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                        {order.specialInstructions && (
-                          <div className="bg-amber-50 p-3 rounded-lg border-l-4 border-amber-400">
-                            <p className="text-xs text-amber-700 uppercase mb-1 font-bold">Special Instructions</p>
-                            <p className="text-sm text-amber-900 font-bold italic">&quot;{order.specialInstructions}&quot;</p>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Action */}
-                      <div className="p-3 bg-slate-50 border-t border-slate-100">
-                        {order.status === 'new' && (
-                          <button
-                            onClick={() => advance(order)}
-                            aria-label={`Start cooking — Table ${order.tableNumber}, order #${order.id.slice(0, 6)}`}
-                            className={`w-full py-3.5 text-white font-bold rounded-lg uppercase tracking-wider text-sm active:scale-95 transition-all ${
-                              isUrgent
-                                ? 'bg-red-500 hover:bg-red-600 ring-2 ring-red-300 ring-offset-1 animate-pulse'
-                                : 'bg-orange-500 hover:bg-orange-600'
-                            }`}
-                          >
-                            {isUrgent ? '⚠ Start Cooking — Urgent' : 'Start Cooking'}
-                          </button>
-                        )}
-                        {order.status === 'in-progress' && (
-                          <button
-                            onClick={() => advance(order)}
-                            aria-label={`Mark ready — Table ${order.tableNumber}, order #${order.id.slice(0, 6)}`}
-                            className={`w-full py-3.5 text-white font-bold rounded-lg uppercase tracking-wider text-sm active:scale-95 transition-all ${
-                              isUrgent
-                                ? 'bg-red-500 hover:bg-red-600 ring-2 ring-red-300 ring-offset-1'
-                                : 'bg-primary hover:bg-orange-800'
-                            }`}
-                          >
-                            {isUrgent ? '⚠ Mark Ready — Urgent' : 'Mark Ready'}
-                          </button>
-                        )}
-                        {order.status === 'ready' && (
-                          <HoldToConfirm
-                            onConfirm={() => advance(order)}
-                            label="Food Delivered"
-                          />
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* History */}
-        {view === 'history' && (
-          <div className="space-y-4">
-            <h2 className="text-2xl font-bold text-slate-900">Order History</h2>
-            {historyOrders.length === 0 ? (
-              <div className="text-center py-16 text-slate-400">
-                <span className="material-symbols-outlined text-5xl mb-3 block">history</span>
-                <p>No served orders yet.</p>
-              </div>
-            ) : (
-              historyOrders.map(order => (
-                <div key={order.id} className="bg-white rounded-xl border border-slate-100 p-4 flex items-center justify-between shadow-sm">
-                  <div>
-                    <p className="font-bold text-slate-900">Table {order.tableNumber} — #{order.id.slice(0, 6)}</p>
-                    <p className="text-sm text-slate-500">{order.items.length} items · ₱{order.total.toFixed(2)}</p>
-                    <p className="text-xs text-slate-400">{new Date(order.createdAt).toLocaleTimeString()}</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full uppercase block mb-1">
-                      Food Delivered
-                    </span>
-                    <span className="text-[10px] text-slate-400">Awaiting payment</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* Tables */}
-        {view === 'tables' && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-slate-900">Table Status</h2>
-              <div className="flex gap-4 text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
-                  <span className="text-slate-600">Available ({tables.filter(t => t.status === 'available').length})</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                  <span className="text-slate-600">Occupied ({tables.filter(t => t.status === 'occupied').length})</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                  <span className="text-slate-600">Reserved ({tables.filter(t => t.status === 'reserved').length})</span>
-                </div>
-              </div>
-            </div>
-
-            {tables.length === 0 ? (
-              <div className="text-center py-16 text-slate-400">
-                <span className="material-symbols-outlined text-5xl mb-3 block">table_restaurant</span>
-                <p>No tables configured yet.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-                {tables.map(table => (
-                  <div key={table.id} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm hover:shadow-md transition-shadow">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <h3 className="font-bold text-slate-900">Table {table.tableNumber}</h3>
-                        <p className="text-xs text-slate-500">{table.name}</p>
-                      </div>
-                      <div className={`px-2 py-1 rounded-full text-xs font-bold ${
-                        table.status === 'available' ? 'bg-emerald-100 text-emerald-700' :
-                        table.status === 'occupied' ? 'bg-red-100 text-red-700' :
-                        'bg-blue-100 text-blue-700'
-                      }`}>
-                        {table.status.toUpperCase()}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-slate-600">
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-sm">group</span>
-                        <span>{table.capacity}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span className="material-symbols-outlined text-sm">{table.shape === 'round' ? 'circle' : 'square'}</span>
-                        <span className="capitalize">{table.shape ?? 'square'}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </main>
-
-      {/* Mobile bottom nav */}
-      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-slate-100 flex justify-around items-center px-4 py-3 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] z-50">
-        {(['live', 'history', 'tables'] as KitchenView[]).map(v => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            className={`flex flex-col items-center text-[11px] font-semibold transition-all active:scale-90 ${
-              view === v ? 'text-primary bg-orange-50 rounded-xl px-3 py-1' : 'text-slate-400'
-            }`}
-          >
-            <span className="material-symbols-outlined">{
-              v === 'live' ? 'monitor_heart' : 
-              v === 'history' ? 'history' : 
-              'table_restaurant'
-            }</span>
-            <span className="capitalize">{
-              v === 'live' ? 'Live Feed' : 
-              v === 'history' ? 'History' : 
-              'Tables'
-            }</span>
-          </button>
-        ))}
-      </nav>
-    </div>
->>>>>>> alas/alas_features
   )
 }
