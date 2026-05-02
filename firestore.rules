@@ -13,16 +13,22 @@ service cloud.firestore {
     // Allow anyone to read tables (for QR code access)
     match /tables/{table} {
       allow read: if true;
-      // Only allow authenticated admins to write tables
-      allow write: if request.auth != null && request.auth.token.admin == true;
+
+      // Admins may fully manage tables.
+      allow create, delete: if request.auth != null && request.auth.token.admin == true;
+
+      // Customers may update table occupancy during checkout/order flow.
+      allow update: if request.writeFields.hasOnly(['status', 'currentOrderId', 'updatedAt']) &&
+                    request.resource.data.status in ['available', 'occupied', 'reserved'];
     }
 
     // Allow anyone to create and read orders (for customer ordering)
     match /orders/{order} {
       allow read: if true;
       allow create: if true;
-      // Only allow authenticated users to update orders
-      allow update: if request.auth != null;
+
+      // Customers also need to update order status during checkout and kitchen flow.
+      allow update: if true;
       allow delete: if request.auth != null && request.auth.token.admin == true;
     }
   }
