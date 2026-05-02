@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
-import { MenuItem } from '@/lib/data'
+import { MenuItem, saveMenuItem } from '@/lib/data'
 import { useCart } from '@/app/cashier/context/CartContext'
 
 interface ProductCardProps {
@@ -57,11 +57,18 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
     .join('')
 
   return (
-    <button
-      onClick={handleAdd}
-      disabled={isUnavailable}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={isUnavailable ? undefined : handleAdd}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (!isUnavailable) handleAdd();
+        }
+      }}
       className={`group bg-white rounded-2xl p-4 shadow-sm border border-surface-container-high hover:shadow-md hover:border-primary/30 transition-all duration-200 text-left w-full relative ${
-        isUnavailable ? 'cursor-not-allowed opacity-70' : ''
+        isUnavailable ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'
       }`}
     >
       {/* Image / Placeholder */}
@@ -98,6 +105,25 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
             </span>
           </div>
         )}
+
+        {/* 86 / Sold Out Toggle */}
+        <button
+          onClick={async (e) => {
+            e.stopPropagation()
+            try {
+              await saveMenuItem({ id: product.id, available: !product.available })
+            } catch (err) {
+              console.error('Failed to update availability', err)
+            }
+          }}
+          className={`absolute top-2 right-2 px-2 py-1 rounded text-xs font-bold shadow-sm transition-colors ${
+            product.available
+              ? 'bg-white text-on-surface-variant hover:bg-red-100 hover:text-red-700'
+              : 'bg-red-500 text-white hover:bg-red-600'
+          }`}
+        >
+          {product.available ? '86' : 'Sold Out'}
+        </button>
       </div>
 
       {/* Info */}
@@ -133,6 +159,6 @@ export function ProductCard({ product, onCartPulse }: ProductCardProps) {
           </span>
         </div>
       </div>
-    </button>
+    </div>
   )
 }

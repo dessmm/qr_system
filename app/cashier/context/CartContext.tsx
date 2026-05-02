@@ -41,6 +41,7 @@ interface CartContextType {
   addItem: (item: Omit<CartItem, 'quantity'>) => void
   removeItem: (id: string) => void
   updateQuantity: (id: string, quantity: number) => void
+  updateItemNote: (id: string, notes: string) => void
   clearCart: () => void
   getSubtotal: () => number
   getTax: (rate: number) => number
@@ -93,6 +94,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  const updateItemNote = useCallback((id: string, notes: string) => {
+    setItems(current =>
+      current.map(item =>
+        item.id === id ? { ...item, notes } : item
+      )
+    )
+  }, [])
+
   const clearCart = useCallback(() => {
     setItems([])
     setCustomerInfo({ name: '', phone: '', email: '' })
@@ -123,6 +132,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         addItem,
         removeItem,
         updateQuantity,
+        updateItemNote,
         clearCart,
         getSubtotal,
         getTax,

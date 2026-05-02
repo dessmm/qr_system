@@ -25,23 +25,34 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
   const [showReceipt, setShowReceipt] = useState(false)
   const [lastTransaction, setLastTransaction] = useState<Transaction | null>(null)
 
+  const [discountType, setDiscountType] = useState<'none' | 'senior' | 'pwd' | 'custom'>('none')
+  const [promoCode, setPromoCode] = useState('')
+  const [isPromoApplied, setIsPromoApplied] = useState(false)
+  
+  const [isConfirming, setIsConfirming] = useState(false)
+  const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
   const subtotal = getSubtotal()
-  const tax = getTax(taxRate)
-  const discount = 0
-  const total = getTotal(taxRate, discount)
+  
+  let computedDiscount = 0
+  if (discountType === 'senior' || discountType === 'pwd') {
+    computedDiscount = subtotal * 0.20
+  } else if (discountType === 'custom' && isPromoApplied && promoCode.toUpperCase() === 'PROMO10') {
+    computedDiscount = subtotal * 0.10
+  }
+
+  const tax = (subtotal - computedDiscount) * (taxRate / 100)
+  const total = subtotal - computedDiscount + tax
   const payment = parseFloat(paymentReceived) || 0
   const change = payment - total
 
-  // Fix #2: change due state derived from payment vs total
   const changeDue = payment - total
   const hasCashInput = paymentReceived !== ''
 
-  // Fix #3: button disabled conditions
   const cartEmpty = items.length === 0
   const cashInsufficient = paymentMethod === 'cash' && payment < total
   const isDisabled = cartEmpty || cashInsufficient
 
-  // Hint message shown below Complete Sale button when disabled
   const disabledHint = cartEmpty
     ? 'Add items to the cart first'
     : cashInsufficient
@@ -50,8 +61,15 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
 
   const cartPanelRef = useRef<HTMLDivElement>(null)
 
-  const handleCheckout = useCallback(async () => {
-    // Fix #3: card/digital bypass cash validation; cash must have sufficient funds
+  // ── Accumulator helper ────────────────────────────────────────────────────
+  const addToPayment = useCallback((amount: number) => {
+    setPaymentReceived(prev => {
+      const current = parseFloat(prev) || 0
+      return String(current + amount)
+    })
+  }, [])
+
+  const handleCheckout = useCallback(() => {
     if (cartEmpty) return
     if (paymentMethod === 'cash' && payment < total) return
     if (!selectedTableId) {
@@ -59,78 +77,86 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
       return
     }
 
-    const selectedTable = tables.find(t => t.id === selectedTableId)
-    if (!selectedTable) return
+    setIsConfirming(true)
+    
+    confirmTimeoutRef.current = setTimeout(async () => {
+      setIsConfirming(false)
+      const selectedTable = tables.find(t => t.id === selectedTableId)
+      if (!selectedTable) return
 
-    const effectivePayment = paymentMethod === 'cash' ? payment : total
-    const transaction: Transaction = {
-      id: `TXN-${Date.now()}`,
-      items: [...items],
-      subtotal,
-      tax,
-      discount,
-      total,
-      paymentReceived: effectivePayment,
-      change: paymentMethod === 'cash' && change > 0 ? change : 0,
-      customer: customerInfo.name ? customerInfo : undefined,
-      timestamp: new Date(),
-      paymentMethod
-    }
-
-    try {
-      // Create the order with the selected table
-      const orderId = await addOrder({
-        tableNumber: selectedTable.tableNumber,
-        items: items.map(i => ({
-          id: i.id,
-          name: i.name,
-          price: i.price,
-          quantity: i.quantity,
-          image: i.image || '',
-          ...(i.variantName && { variantName: i.variantName }),
-          ...(i.notes && { notes: i.notes })
-        })),
-        status: 'new',
+      const effectivePayment = paymentMethod === 'cash' ? payment : total
+      const transaction: Transaction = {
+        id: `TXN-${Date.now()}`,
+        items: [...items],
+        subtotal,
+        tax,
+        discount: computedDiscount,
         total,
-        orderType: 'dine-in',
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      })
-
-      // Mark the table as occupied with the order ID
-      if (orderId) {
-        await updateTableStatus(selectedTableId, 'occupied', orderId)
+        paymentReceived: effectivePayment,
+        change: paymentMethod === 'cash' && change > 0 ? change : 0,
+        customer: customerInfo.name ? customerInfo : undefined,
+        timestamp: new Date(),
+        paymentMethod
       }
 
-      setLastTransaction(transaction)
-      setShowReceipt(true)
-      onComplete?.(transaction)
-      clearCart()
-    } catch (err) {
-      console.error('Checkout error:', err)
-      alert('Checkout failed. Please try again.')
-    }
-  }, [cartEmpty, payment, total, items, subtotal, tax, discount, customerInfo, paymentMethod, change, onComplete, selectedTableId, tables, clearCart])
+      try {
+        const orderId = await addOrder({
+          tableNumber: selectedTable.tableNumber,
+          items: items.map(i => ({
+            id: i.id,
+            name: i.name,
+            price: i.price,
+            quantity: i.quantity,
+            image: i.image || '',
+            ...(i.variantName && { variantName: i.variantName }),
+            ...(i.notes && { notes: i.notes })
+          })),
+          status: 'new',
+          total,
+          orderType: 'dine-in',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        })
 
-  // Fix #9: keyboard shortcut ref — only active when cash is selected
+        if (orderId) {
+          await updateTableStatus(selectedTableId, 'occupied', orderId)
+        }
+
+        setLastTransaction(transaction)
+        setShowReceipt(true)
+        onComplete?.(transaction)
+        clearCart()
+      } catch (err) {
+        console.error('Checkout error:', err)
+        alert('Checkout failed. Please try again.')
+      }
+    }, 5000)
+  }, [cartEmpty, payment, total, items, subtotal, tax, computedDiscount, customerInfo, paymentMethod, change, onComplete, selectedTableId, tables, clearCart])
+
+  const cancelConfirmation = useCallback(() => {
+    if (confirmTimeoutRef.current) {
+      clearTimeout(confirmTimeoutRef.current)
+    }
+    setIsConfirming(false)
+  }, [])
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
-    if (paymentMethod !== 'cash') return // remove bindings for non-cash
+    if (paymentMethod !== 'cash') return
 
     const handler = (e: KeyboardEvent) => {
-      // Only fire if focus is inside cart panel or on the body (global fallback)
       const target = e.target as HTMLElement
       const inPanel = cartPanelRef.current?.contains(target) ?? false
       const isBody = target === document.body || target.tagName === 'DIV'
       if (!inPanel && !isBody) return
 
-      // Don't override normal typing inside inputs (except Escape)
       if (target.tagName === 'INPUT' && e.key !== 'Escape' && e.key !== 'Enter') return
 
       switch (e.key) {
-        case '1': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[0])); break
-        case '2': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[1])); break
-        case '3': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[2])); break
-        case '4': e.preventDefault(); setPaymentReceived(String(QUICK_AMOUNTS[3])); break
+        case '1': e.preventDefault(); addToPayment(QUICK_AMOUNTS[0]); break
+        case '2': e.preventDefault(); addToPayment(QUICK_AMOUNTS[1]); break
+        case '3': e.preventDefault(); addToPayment(QUICK_AMOUNTS[2]); break
+        case '4': e.preventDefault(); addToPayment(QUICK_AMOUNTS[3]); break
         case 'Enter':
           e.preventDefault()
           if (!isDisabled) handleCheckout()
@@ -145,18 +171,20 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paymentMethod, isDisabled, payment, total])
-
+  }, [paymentMethod, isDisabled, addToPayment])
 
   const handleNewTransaction = () => {
     setShowReceipt(false)
     setLastTransaction(null)
     setPaymentReceived('')
+    setDiscountType('none')
+    setPromoCode('')
+    setIsPromoApplied(false)
     clearCart()
     onTableSelect?.(null)
   }
 
-  // ── Empty cart state ────────────────────────────────────────────────────────
+  // ── Empty cart state ──────────────────────────────────────────────────────
   if (items.length === 0) {
     return (
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-surface-container-low">
@@ -169,24 +197,21 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
     )
   }
 
-  // ── Receipt view ────────────────────────────────────────────────────────────
+  // ── Receipt view ──────────────────────────────────────────────────────────
   if (showReceipt && lastTransaction) {
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-surface-container-low overflow-hidden">
-        {/* Receipt Header */}
         <div className="bg-primary text-white p-4 text-center">
           <span className="material-symbols-outlined text-3xl mb-1">check_circle</span>
           <h3 className="font-bold text-lg">Transaction Complete</h3>
           <p className="text-sm opacity-90">{lastTransaction.id}</p>
         </div>
 
-        {/* Receipt Details */}
         <div className="p-4 space-y-3">
           <div className="text-center border-b border-outline-variant pb-3 mb-3">
             <p className="text-xs text-on-surface-variant">{lastTransaction.timestamp.toLocaleString()}</p>
           </div>
 
-          {/* Items */}
           <div className="space-y-2">
             {lastTransaction.items.map((item, idx) => (
               <div key={idx} className="flex justify-between text-sm">
@@ -196,7 +221,6 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
             ))}
           </div>
 
-          {/* Totals */}
           <div className="border-t border-outline-variant pt-3 space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-on-surface-variant">Subtotal</span>
@@ -212,7 +236,6 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
             </div>
           </div>
 
-          {/* Payment Info */}
           <div className="bg-surface-container-low rounded-xl p-3 space-y-1">
             <div className="flex justify-between text-sm">
               <span className="text-on-surface-variant">Payment Method</span>
@@ -231,7 +254,6 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
           </div>
         </div>
 
-        {/* New Transaction Button */}
         <div className="p-4 border-t border-surface-container-low">
           <button
             onClick={handleNewTransaction}
@@ -245,7 +267,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
     )
   }
 
-  // ── Main cart/payment view ─────────────────────────────────────────────────
+  // ── Main cart/payment view ────────────────────────────────────────────────
   return (
     <div ref={cartPanelRef} className="bg-white rounded-2xl shadow-sm border border-surface-container-low">
       {/* Cart Items */}
@@ -264,7 +286,56 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
           <span className="text-on-surface-variant">Subtotal</span>
           <span className="text-on-surface">₱{subtotal.toFixed(2)}</span>
         </div>
-        <div className="flex justify-between text-sm">
+        
+        {/* Discount Section */}
+        <div className="space-y-2 pt-2 border-t border-surface-container-low">
+          <div className="flex justify-between items-center">
+            <span className="text-sm text-on-surface-variant">Discount</span>
+            <select
+              value={discountType}
+              onChange={(e) => {
+                setDiscountType(e.target.value as any)
+                setIsPromoApplied(false)
+              }}
+              className="px-2 py-1 bg-surface-container-low rounded border border-surface-container-high text-sm focus:outline-none focus:border-primary"
+            >
+              <option value="none">None</option>
+              <option value="senior">Senior Citizen (20%)</option>
+              <option value="pwd">PWD (20%)</option>
+              <option value="custom">Promo Code</option>
+            </select>
+          </div>
+          
+          {discountType === 'custom' && (
+            <div className="flex gap-2 mt-1">
+              <input
+                type="text"
+                placeholder="PROMO10"
+                value={promoCode}
+                onChange={e => {
+                  setPromoCode(e.target.value)
+                  setIsPromoApplied(false)
+                }}
+                className="flex-1 px-2 py-1 text-sm border border-surface-container-high rounded bg-surface-container-low focus:border-primary focus:outline-none uppercase"
+              />
+              <button
+                onClick={() => setIsPromoApplied(true)}
+                className="px-3 py-1 bg-surface-container-high hover:bg-surface-container-highest text-sm rounded font-medium transition-colors"
+              >
+                Apply
+              </button>
+            </div>
+          )}
+          
+          {computedDiscount > 0 && (
+            <div className="flex justify-between text-sm text-green-600 font-medium">
+              <span>Discount Applied</span>
+              <span>-₱{computedDiscount.toFixed(2)}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-between text-sm pt-2 border-t border-surface-container-low">
           <span className="text-on-surface-variant">Tax ({taxRate}%)</span>
           <span className="text-on-surface">₱{tax.toFixed(2)}</span>
         </div>
@@ -279,18 +350,24 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
         {/* Table Selection */}
         <div>
           <label className="text-sm font-medium text-on-surface-variant block mb-2">Assign to Table</label>
-          <select
-            value={selectedTableId || ''}
-            onChange={e => onTableSelect?.(e.target.value || null)}
-            className="w-full px-4 py-3 bg-surface-container-low rounded-xl border border-surface-container-high focus:border-primary focus:outline-none text-sm"
-          >
-            <option value="">-- Select a table --</option>
+          <div className="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto pr-1">
             {tables.map(table => (
-              <option key={table.id} value={table.id}>
-                Table {table.tableNumber} - {table.name} ({table.status})
-              </option>
+              <button
+                key={table.id}
+                onClick={() => onTableSelect?.(table.id)}
+                className={`flex flex-col items-center justify-center py-2 px-1 rounded-xl border text-xs font-medium transition-all ${
+                  selectedTableId === table.id
+                    ? 'border-primary bg-primary/10 text-primary'
+                    : table.status === 'available'
+                    ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                    : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100 opacity-70'
+                }`}
+              >
+                <span className="font-bold text-sm">T{table.tableNumber}</span>
+                <span className="text-[10px] opacity-80">{table.capacity} pax</span>
+              </button>
             ))}
-          </select>
+          </div>
           {selectedTableId && (
             <p className="text-xs text-primary mt-1">✓ Table selected</p>
           )}
@@ -316,12 +393,11 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
           </div>
         </div>
 
-        {/* Cash Input — only shown for cash method */}
+        {/* Cash Input */}
         {paymentMethod === 'cash' && (
           <div>
             <label className="text-sm font-medium text-on-surface-variant block mb-2">Cash Received</label>
             <div className="relative">
-              {/* Philippine Peso symbol */}
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant font-medium">₱</span>
               <input
                 type="number"
@@ -332,25 +408,41 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
               />
             </div>
 
-            {/* Quick amounts — updated to PHP denominations */}
-            <div className="grid grid-cols-4 gap-2 mt-2">
+            {/* Quick amounts — ₱100/₱200/₱500/₱1000 ACCUMULATE on each tap */}
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              <button
+                onClick={() => setPaymentReceived(String(total.toFixed(2)))}
+                className="py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium hover:bg-primary/20 transition-colors"
+              >
+                Exact
+              </button>
+              <button
+                onClick={() => setPaymentReceived(String(Math.ceil(total / 50) * 50))}
+                className="py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium hover:bg-primary/20 transition-colors"
+              >
+                Round Up
+              </button>
               {QUICK_AMOUNTS.map(amount => (
                 <button
                   key={amount}
-                  onClick={() => setPaymentReceived(String(amount))}
+                  onClick={() => addToPayment(amount)}
                   className="py-2 bg-surface-container-high rounded-lg text-sm font-medium hover:bg-surface-container-highest transition-colors"
                 >
-                  ₱{amount}
+                  +₱{amount}
                 </button>
               ))}
+              <button
+  onClick={() => setPaymentReceived('')}
+  className="py-2 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors col-span-3"
+>
+  Clear
+</button>
             </div>
 
-            {/* Fix #9: keyboard hint row */}
             <p className="text-xs text-on-surface-variant text-center mt-1.5 opacity-70">
               Press 1–4 for quick amounts · Enter to complete · Esc to clear
             </p>
 
-            {/* Fix #2: Change Due display — always visible once input has a value */}
             {hasCashInput && (
               <div className={`mt-3 p-3 rounded-xl flex justify-between items-center ${
                 changeDue >= 0 ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
@@ -368,21 +460,49 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
           </div>
         )}
 
-        {/* Fix #3: Complete Sale button with validation */}
+        {/* Complete Sale or Confirming Toast */}
         <div>
-          <button
-            onClick={handleCheckout}
-            disabled={isDisabled}
-            style={isDisabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
-            className="w-full py-4 bg-primary text-white rounded-xl font-bold text-lg hover:bg-primary-container transition-colors flex items-center justify-center gap-2"
-          >
-            <span className="material-symbols-outlined">payments</span>
-            Complete Sale
-          </button>
+          {!isConfirming ? (
+            <>
+              <button
+                onClick={handleCheckout}
+                disabled={isDisabled}
+                style={isDisabled ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+                className="w-full py-4 bg-primary text-white rounded-xl font-bold text-lg hover:bg-primary-container transition-colors flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined">payments</span>
+                Complete Sale
+              </button>
 
-          {/* Inline hint when disabled */}
-          {isDisabled && disabledHint && (
-            <p className="text-xs text-on-surface-variant text-center mt-2">{disabledHint}</p>
+              {isDisabled && disabledHint && (
+                <p className="text-xs text-on-surface-variant text-center mt-2">{disabledHint}</p>
+              )}
+            </>
+          ) : (
+            <div className="w-full py-2 bg-green-500 rounded-xl overflow-hidden relative shadow-inner">
+              <div 
+                className="absolute top-0 left-0 bottom-0 bg-green-600 transition-all ease-linear"
+                style={{ width: '100%', animation: 'shrink 5s linear forwards' }}
+              />
+              <div className="relative flex items-center justify-between px-4 z-10 text-white">
+                <span className="font-medium text-sm flex items-center gap-2">
+                  <span className="material-symbols-outlined text-sm">check_circle</span>
+                  Order sent to kitchen
+                </span>
+                <button
+                  onClick={cancelConfirmation}
+                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded text-sm font-bold transition-colors"
+                >
+                  Undo
+                </button>
+              </div>
+              <style>{`
+                @keyframes shrink {
+                  from { width: 100%; }
+                  to { width: 0%; }
+                }
+              `}</style>
+            </div>
           )}
         </div>
 
@@ -398,34 +518,80 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
   )
 }
 
-// ── Inline CartItemRow (compact list inside the cart panel) ───────────────────
+// ── Inline CartItemRow ────────────────────────────────────────────────────────
 function CartItemRow({ item }: { item: CartItemType }) {
-  const { updateQuantity, removeItem } = useCart()
+  const { updateQuantity, removeItem, updateItemNote } = useCart()
+  const [isEditingNote, setIsEditingNote] = useState(false)
+  const [noteInput, setNoteInput] = useState(item.notes || '')
 
   return (
-    <div className="flex items-center gap-2 py-2">
-      {/* Fix #1: qty controls in the compact row */}
-      <button
-        onClick={() => updateQuantity(item.id, item.quantity - 1)}
-        aria-label="Decrease"
-        className="w-6 h-6 rounded-full bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center transition-colors flex-shrink-0"
-      >
-        <span className="material-symbols-outlined text-on-surface" style={{ fontSize: '14px' }}>remove</span>
-      </button>
-      <span className="text-sm text-on-surface-variant w-5 text-center">{item.quantity}</span>
-      <button
-        onClick={() => updateQuantity(item.id, item.quantity + 1)}
-        aria-label="Increase"
-        className="w-6 h-6 rounded-full bg-primary text-white hover:bg-primary-container flex items-center justify-center transition-colors flex-shrink-0"
-      >
-        <span className="material-symbols-outlined text-on-primary" style={{ fontSize: '14px' }}>add</span>
-      </button>
+    <div className="flex flex-col gap-1 py-2 border-b border-surface-container-low last:border-0">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => updateQuantity(item.id, item.quantity - 1)}
+          aria-label="Decrease"
+          className="w-6 h-6 rounded-full bg-surface-container-high hover:bg-surface-container-highest flex items-center justify-center transition-colors flex-shrink-0"
+        >
+          <span className="material-symbols-outlined text-on-surface" style={{ fontSize: '14px' }}>remove</span>
+        </button>
+        <span className="text-sm text-on-surface-variant w-5 text-center">{item.quantity}</span>
+        <button
+          onClick={() => updateQuantity(item.id, item.quantity + 1)}
+          aria-label="Increase"
+          className="w-6 h-6 rounded-full bg-primary text-white hover:bg-primary-container flex items-center justify-center transition-colors flex-shrink-0"
+        >
+          <span className="material-symbols-outlined text-on-primary" style={{ fontSize: '14px' }}>add</span>
+        </button>
 
-      <span className="flex-1 text-sm text-on-surface truncate">{item.name}</span>
-      <span className="text-sm font-medium text-on-surface">₱{(item.price * item.quantity).toFixed(2)}</span>
-      <button onClick={() => removeItem(item.id)} className="p-1 hover:bg-error-container rounded" aria-label="Remove">
-        <span className="material-symbols-outlined text-error text-sm">close</span>
-      </button>
+        <span className="flex-1 text-sm text-on-surface truncate">{item.name}</span>
+        <span className="text-sm font-medium text-on-surface">₱{(item.price * item.quantity).toFixed(2)}</span>
+        <button onClick={() => removeItem(item.id)} className="p-1 hover:bg-error-container rounded" aria-label="Remove">
+          <span className="material-symbols-outlined text-error text-sm">close</span>
+        </button>
+      </div>
+
+      {/* Item Notes */}
+      <div className="pl-16 pr-8">
+        {!isEditingNote ? (
+          <div className="flex items-center gap-2">
+            {item.notes ? (
+              <span className="text-xs text-on-surface-variant italic">Note: {item.notes}</span>
+            ) : null}
+            <button
+              onClick={() => setIsEditingNote(true)}
+              className="text-xs text-primary hover:underline"
+            >
+              {item.notes ? 'Edit note' : '+ Add note'}
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 mt-1">
+            <input
+              type="text"
+              value={noteInput}
+              onChange={e => setNoteInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  updateItemNote(item.id, noteInput)
+                  setIsEditingNote(false)
+                }
+              }}
+              autoFocus
+              placeholder="e.g. no onions, extra spicy"
+              className="flex-1 px-2 py-1 text-xs border border-surface-container-high rounded bg-surface-container-low focus:border-primary focus:outline-none"
+            />
+            <button
+              onClick={() => {
+                updateItemNote(item.id, noteInput)
+                setIsEditingNote(false)
+              }}
+              className="text-xs text-primary font-medium"
+            >
+              Save
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

@@ -113,13 +113,13 @@ export default function MenuPage() {
   const [selectedVariantIndex, setSelectedVariantIndex] = useState<Record<string, number>>({})
   const [searchQuery, setSearchQuery]   = useState('')
   const [showCart, setShowCart]         = useState(false)
+  const [showConfirm, setShowConfirm]   = useState(false)  // ← NEW
   const [specialInstructions, setSpecialInstructions] = useState('')
   const [isPlacing, setIsPlacing]       = useState(false)
   const [menuItems, setMenuItems]       = useState<MenuItem[]>([])
   const [settings, setSettings]         = useState<AppSettings>(DEFAULT_SETTINGS)
   const [lastOrderId, setLastOrderId]   = useState<string | null>(null)
   const [menuLoading, setMenuLoading]   = useState(true)
-  // Store the full table object so we always have tableId ready
   const [table, setTable]               = useState<Table | null>(null)
   const [orderError, setOrderError]     = useState('')
   const cartBarRef                      = useRef<HTMLDivElement>(null)
@@ -182,10 +182,6 @@ export default function MenuPage() {
   }
 
   // ─── Place order ───────────────────────────────────────────────────────────
-  // FIX: Pass table.id directly into addOrder so the batch write atomically
-  // marks the table as 'occupied' at the same time the order is created.
-  // No more linkOrderToTable called after router.push() (which was being
-  // abandoned because the page unmounted before the async call could finish).
   const placeOrder = async () => {
     if (cart.length === 0) return
     setIsPlacing(true)
@@ -209,9 +205,6 @@ export default function MenuPage() {
           total: cartTotal,
           orderType: 'dine-in'
         },
-        // Pass the Firestore table document ID so addOrder can occupy it
-        // atomically. If the table hasn't loaded yet we fall back gracefully —
-        // the admin can manually mark it occupied from the cashier panel.
         table?.id ?? undefined
       )
 
@@ -220,7 +213,7 @@ export default function MenuPage() {
         setLastOrderId(orderId)
         setCart([])
         setSpecialInstructions('')
-        // Navigate immediately — the batch write already committed above
+        setShowConfirm(false)
         router.push(`/checkout/${orderId}`)
       } else {
         setIsPlacing(false)
@@ -258,6 +251,11 @@ export default function MenuPage() {
   const cartTotal = cart.reduce((sum, i) => sum + i.price * i.quantity, 0)
   const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0)
 
+  const taxRate    = parseFloat(settings.taxRate    || '0') / 100
+  const serviceFee = parseFloat(settings.serviceFee || '0')
+  const tax        = cartTotal * taxRate
+  const grandTotal = cartTotal + tax + serviceFee
+
   const filteredItems = menuItems.filter(item => {
     const matchCat    = activeCategory === 'All' || item.category === activeCategory
     const q           = searchQuery.toLowerCase()
@@ -266,7 +264,7 @@ export default function MenuPage() {
       item.description?.toLowerCase().includes(q) ||
       item.tags?.some(t => t.toLowerCase().includes(q)) ||
       item.badge?.toLowerCase().includes(q)
-    return matchCat && matchSearch  // sold-out items are now shown (greyed out)
+    return matchCat && matchSearch
   })
 
   return (
@@ -402,7 +400,8 @@ export default function MenuPage() {
         .cart-notes { width:100%;background:#f5f4f0;border:0.5px solid rgba(0,0,0,0.08);border-radius:12px;padding:12px;font-family:'Outfit',sans-serif;font-size:0.85rem;color:#0a0a0a;resize:none;outline:none;margin-bottom:16px;transition:border-color 0.2s ease; }
         .cart-notes::placeholder { color:rgba(0,0,0,0.3); }
         .cart-notes:focus { border-color:rgba(0,0,0,0.25); }
-        .cart-total-row { display:flex;justify-content:space-between;align-items:center;border-top:0.5px solid rgba(0,0,0,0.08);padding-top:14px;margin-bottom:16px; }
+        .cart-total-row { display:flex;justify-content:space-between;align-items:center;padding:6px 0; }
+        .cart-total-row.border-top { border-top:0.5px solid rgba(0,0,0,0.08);padding-top:12px;margin-top:4px; }
         .cart-total-label { font-size:0.8rem;font-weight:500;letter-spacing:0.1em;text-transform:uppercase;color:rgba(0,0,0,0.4); }
         .cart-total-amount { font-family:'Playfair Display',serif;font-size:1.4rem;font-weight:700;color:#0a0a0a;letter-spacing:-0.02em; }
         .cart-place-btn { width:100%;height:56px;background:#0a0a0a;color:white;border:none;border-radius:14px;font-family:'Outfit',sans-serif;font-size:0.9rem;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:all 0.2s ease;box-shadow:0 4px 16px rgba(0,0,0,0.2); }
@@ -410,18 +409,44 @@ export default function MenuPage() {
         .cart-place-btn:active { transform:scale(0.99); }
         .cart-place-btn:disabled { opacity:0.5;cursor:not-allowed; }
         .cart-place-btn .material-symbols-outlined { font-size:17px; }
+        /* Confirm sheet */
+        .confirm-overlay { position:fixed;inset:0;z-index:70;display:flex;flex-direction:column;justify-content:flex-end; }
+        .confirm-backdrop { position:absolute;inset:0;background:rgba(0,0,0,0.6); }
+        .confirm-sheet { position:relative;background:white;border-radius:24px 24px 0 0;padding:24px;max-height:88svh;display:flex;flex-direction:column;animation:slideUp 0.35s cubic-bezier(0.16,1,0.3,1); }
+        .confirm-handle { width:36px;height:4px;background:rgba(0,0,0,0.1);border-radius:2px;margin:-8px auto 20px; }
+        .confirm-icon { width:52px;height:52px;background:#f0efe9;border-radius:14px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px; }
+        .confirm-icon .material-symbols-outlined { font-size:24px;color:#0a0a0a; }
+        .confirm-title { font-family:'Playfair Display',serif;font-size:1.3rem;font-weight:700;color:#0a0a0a;text-align:center;margin:0 0 4px; }
+        .confirm-subtitle { font-size:0.82rem;color:rgba(0,0,0,0.4);text-align:center;margin:0 0 20px; }
+        .confirm-items { overflow-y:auto;max-height:200px;margin-bottom:16px;-ms-overflow-style:none;scrollbar-width:none; }
+        .confirm-items::-webkit-scrollbar { display:none; }
+        .confirm-item { display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:0.5px solid rgba(0,0,0,0.05); }
+        .confirm-item:last-child { border-bottom:none; }
+        .confirm-item-left { display:flex;align-items:center;gap:8px; }
+        .confirm-item-qty { width:22px;height:22px;background:#0a0a0a;color:white;border-radius:6px;font-size:0.72rem;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0; }
+        .confirm-item-name { font-size:0.88rem;font-weight:500;color:#0a0a0a; }
+        .confirm-item-variant { font-size:0.75rem;color:rgba(0,0,0,0.4); }
+        .confirm-item-price { font-size:0.88rem;font-weight:600;color:#0a0a0a; }
+        .confirm-totals { background:#f5f4f0;border-radius:14px;padding:14px;margin-bottom:20px; }
+        .confirm-total-row { display:flex;justify-content:space-between;font-size:0.82rem;color:rgba(0,0,0,0.5);margin-bottom:6px; }
+        .confirm-total-row:last-child { margin-bottom:0;border-top:0.5px solid rgba(0,0,0,0.1);padding-top:8px;margin-top:4px; }
+        .confirm-total-row.grand { font-size:1rem;font-weight:700;color:#0a0a0a; }
+        .confirm-btn-primary { width:100%;height:56px;background:#0a0a0a;color:white;border:none;border-radius:14px;font-family:'Outfit',sans-serif;font-size:0.9rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:all 0.2s ease;box-shadow:0 4px 16px rgba(0,0,0,0.2);margin-bottom:10px; }
+        .confirm-btn-primary:hover { background:#1a1a1a; }
+        .confirm-btn-primary:active { transform:scale(0.99); }
+        .confirm-btn-primary:disabled { opacity:0.5;cursor:not-allowed; }
+        .confirm-btn-secondary { width:100%;height:44px;background:none;border:none;font-family:'Outfit',sans-serif;font-size:0.88rem;font-weight:500;color:rgba(0,0,0,0.4);cursor:pointer;transition:color 0.15s ease; }
+        .confirm-btn-secondary:hover { color:#0a0a0a; }
+        .confirm-notes-preview { font-size:0.78rem;color:rgba(0,0,0,0.4);font-style:italic;text-align:center;margin-bottom:12px; }
         .animate-spin { animation:spin 1s linear infinite; }
         @keyframes spin { from{transform:rotate(0deg)}to{transform:rotate(360deg)} }
         .hide-scrollbar { -ms-overflow-style:none;scrollbar-width:none; }
         .hide-scrollbar::-webkit-scrollbar { display:none; }
-        /* Sold-out overlay */
         .menu-sold-out-overlay { position:absolute;inset:0;background:rgba(0,0,0,0.42);display:flex;align-items:center;justify-content:center;z-index:5; }
         .menu-sold-out-badge { background:#ef4444;color:white;font-size:0.68rem;font-weight:800;padding:5px 14px;border-radius:6px;letter-spacing:0.1em;transform:rotate(-8deg);border:2px solid white;text-transform:uppercase; }
         .menu-card.unavailable { opacity:0.72; }
-        /* Category scroll fade mask */
         .menu-cats-wrap { position:relative; }
         .menu-cats-wrap::after { content:'';position:absolute;right:0;top:0;bottom:12px;width:44px;background:linear-gradient(to right,transparent,#f5f4f0);pointer-events:none;z-index:2; }
-        /* Cart bar bounce */
         @keyframes cartBarBounce { 0%{transform:translateX(-50%) scale(1)} 35%{transform:translateX(-50%) scale(1.045)} 100%{transform:translateX(-50%) scale(1)} }
         .cart-bar-bounce { animation:cartBarBounce 0.35s ease; }
       `}</style>
@@ -476,7 +501,7 @@ export default function MenuPage() {
             />
           </div>
 
-          {/* Category nav — wrapped for right-edge fade mask */}
+          {/* Category nav */}
           <div className="menu-cats-wrap">
             <nav className="menu-cats hide-scrollbar">
               {['All', ...CATEGORIES].map(cat => (
@@ -513,12 +538,12 @@ export default function MenuPage() {
                 </div>
               ) : (
                 filteredItems.map(item => {
-                  const itemVariants   = item.variants ?? []
-                  const selectedIndex  = selectedVariantIndex[item.id] ?? 0
+                  const itemVariants    = item.variants ?? []
+                  const selectedIndex   = selectedVariantIndex[item.id] ?? 0
                   const selectedVariant = itemVariants[selectedIndex]
-                  const displayPrice   = selectedVariant?.price ?? item.price
-                  const cartItemId     = selectedVariant?.name ? `${item.id}::${selectedVariant.name}` : item.id
-                  const qty            = getCartQty(item.id, selectedVariant?.name)
+                  const displayPrice    = selectedVariant?.price ?? item.price
+                  const cartItemId      = selectedVariant?.name ? `${item.id}::${selectedVariant.name}` : item.id
+                  const qty             = getCartQty(item.id, selectedVariant?.name)
                   return (
                     <div key={item.id} className={`menu-card${!item.available ? ' unavailable' : ''}`}>
                       <div className="menu-card-img-wrap">
@@ -622,7 +647,7 @@ export default function MenuPage() {
           </div>
         )}
 
-        {/* Cart Drawer */}
+        {/* ── Cart Drawer ─────────────────────────────────────────────────── */}
         {showCart && (
           <div className="cart-overlay">
             <div className="cart-backdrop" onClick={() => setShowCart(false)} />
@@ -677,52 +702,124 @@ export default function MenuPage() {
                     value={specialInstructions}
                     onChange={e => setSpecialInstructions(e.target.value)}
                   />
-                  {(() => {
-                    const taxRate    = parseFloat(settings.taxRate    || '0') / 100
-                    const serviceFee = parseFloat(settings.serviceFee || '0')
-                    const tax        = cartTotal * taxRate
-                    const grandTotal = cartTotal + tax + serviceFee
-                    return (
-                      <>
-                        <div className="cart-total-row">
-                          <span className="cart-total-label">Subtotal</span>
-                          <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{cartTotal.toFixed(2)}</span>
-                        </div>
-                        {tax > 0 && (
-                          <div className="cart-total-row">
-                            <span className="cart-total-label">Tax ({settings.taxRate}%)</span>
-                            <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{tax.toFixed(2)}</span>
-                          </div>
-                        )}
-                        {serviceFee > 0 && (
-                          <div className="cart-total-row">
-                            <span className="cart-total-label">Service Fee</span>
-                            <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{serviceFee.toFixed(2)}</span>
-                          </div>
-                        )}
-                        <div className="cart-total-row">
-                          <span className="cart-total-label">Total</span>
-                          <span className="cart-total-amount">₱{grandTotal.toFixed(2)}</span>
-                        </div>
-                      </>
-                    )
-                  })()}
-                  {orderError && (
-                    <p style={{color:'#dc2626',fontSize:'0.82rem',fontWeight:500,textAlign:'center',marginBottom:'10px'}}>
-                      {orderError}
-                    </p>
+                  <div className="cart-total-row">
+                    <span className="cart-total-label">Subtotal</span>
+                    <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{cartTotal.toFixed(2)}</span>
+                  </div>
+                  {tax > 0 && (
+                    <div className="cart-total-row">
+                      <span className="cart-total-label">Tax ({settings.taxRate}%)</span>
+                      <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{tax.toFixed(2)}</span>
+                    </div>
                   )}
-                  <button onClick={placeOrder} disabled={isPlacing} className="cart-place-btn">
-                    {isPlacing
-                      ? <><span className="material-symbols-outlined animate-spin">progress_activity</span>Placing Order...</>
-                      : <>Place Order<span className="material-symbols-outlined">arrow_forward</span></>
-                    }
+                  {serviceFee > 0 && (
+                    <div className="cart-total-row">
+                      <span className="cart-total-label">Service Fee</span>
+                      <span style={{fontSize:'0.9rem',fontWeight:500,color:'#0a0a0a'}}>₱{serviceFee.toFixed(2)}</span>
+                    </div>
+                  )}
+                  <div className="cart-total-row border-top" style={{marginBottom:'16px'}}>
+                    <span className="cart-total-label">Total</span>
+                    <span className="cart-total-amount">₱{grandTotal.toFixed(2)}</span>
+                  </div>
+
+                  {/* ── PLACE ORDER → opens confirm sheet instead of firing directly ── */}
+                  <button
+                    onClick={() => { setShowCart(false); setShowConfirm(true) }}
+                    className="cart-place-btn"
+                  >
+                    <>Place Order<span className="material-symbols-outlined">arrow_forward</span></>
                   </button>
                 </>
               )}
             </div>
           </div>
         )}
+
+        {/* ── Order Confirmation Sheet ─────────────────────────────────────── */}
+        {showConfirm && (
+          <div className="confirm-overlay">
+            <div className="confirm-backdrop" onClick={() => { if (!isPlacing) setShowConfirm(false) }} />
+            <div className="confirm-sheet">
+              <div className="confirm-handle" />
+
+              {/* Icon + heading */}
+              <div className="confirm-icon">
+                <span className="material-symbols-outlined">receipt_long</span>
+              </div>
+              <h2 className="confirm-title">Confirm Your Order</h2>
+              <p className="confirm-subtitle">Table {tableNumber} · {cartCount} item{cartCount !== 1 ? 's' : ''}</p>
+
+              {/* Item list */}
+              <div className="confirm-items">
+                {cart.map(item => (
+                  <div key={item.id} className="confirm-item">
+                    <div className="confirm-item-left">
+                      <span className="confirm-item-qty">{item.quantity}</span>
+                      <div>
+                        <p className="confirm-item-name">{item.name}</p>
+                        {item.variantName && <p className="confirm-item-variant">{item.variantName}</p>}
+                      </div>
+                    </div>
+                    <span className="confirm-item-price">₱{(item.price * item.quantity).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Special instructions preview */}
+              {specialInstructions && (
+                <p className="confirm-notes-preview">📝 "{specialInstructions}"</p>
+              )}
+
+              {/* Totals */}
+              <div className="confirm-totals">
+                <div className="confirm-total-row">
+                  <span>Subtotal</span>
+                  <span>₱{cartTotal.toFixed(2)}</span>
+                </div>
+                {tax > 0 && (
+                  <div className="confirm-total-row">
+                    <span>Tax ({settings.taxRate}%)</span>
+                    <span>₱{tax.toFixed(2)}</span>
+                  </div>
+                )}
+                {serviceFee > 0 && (
+                  <div className="confirm-total-row">
+                    <span>Service Fee</span>
+                    <span>₱{serviceFee.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="confirm-total-row grand">
+                  <span>Total</span>
+                  <span>₱{grandTotal.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Error */}
+              {orderError && (
+                <p style={{color:'#dc2626',fontSize:'0.82rem',fontWeight:500,textAlign:'center',marginBottom:'10px'}}>
+                  {orderError}
+                </p>
+              )}
+
+              {/* Actions */}
+              <button onClick={placeOrder} disabled={isPlacing} className="confirm-btn-primary">
+                {isPlacing
+                  ? <><span className="material-symbols-outlined animate-spin">progress_activity</span>Placing Order...</>
+                  : <><span className="material-symbols-outlined">check_circle</span>Yes, Place Order</>
+                }
+              </button>
+              <button
+                onClick={() => { setShowConfirm(false); setShowCart(true) }}
+                disabled={isPlacing}
+                className="confirm-btn-secondary"
+              >
+                Go Back to Cart
+              </button>
+            </div>
+          </div>
+        )}
+
       </div>
     </>
   )

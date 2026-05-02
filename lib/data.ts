@@ -116,6 +116,14 @@ export async function deleteTable(tableId: string) {
   }
 }
 
+export async function updateTable(tableId: string, updates: Partial<Table>) {
+  try {
+    await updateDoc(doc(db, TABLES_COL, tableId), { ...updates, updatedAt: Date.now() })
+  } catch (error) {
+    console.error('Error updating table:', error)
+  }
+}
+
 export async function getTableByQrCode(qrCode: string): Promise<Table | null> {
   try {
     const snap = await getDocs(collection(db, TABLES_COL))

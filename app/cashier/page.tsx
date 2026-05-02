@@ -10,7 +10,7 @@ import { QuickOrderPanel } from '@/app/cashier/components/QuickOrderPanel'
 import { HistoryPanel } from '@/app/cashier/components/HistoryPanel'
 import { SettingsPanel } from '@/app/cashier/components/SettingsPanel'
 import { TableOrderHistoryModal } from '@/app/cashier/components/TableOrderHistoryModal'
-import { listenToMenu, listenToTables, listenToOrders, MenuItem, CATEGORIES, Table, TableStatus, updateTableStatus, clearTableAfterPayment, Order } from '@/lib/data'
+import { listenToMenu, listenToTables, listenToOrders, MenuItem, CATEGORIES, Table, TableStatus, updateTableStatus, clearTableAfterPayment, Order, updateOrderStatus } from '@/lib/data'
 
 function CashierContent() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -384,9 +384,9 @@ function CashierContent() {
               <span className="flex items-center justify-center gap-2">
                 <span className="material-symbols-outlined">qr_code</span>
                 QR Orders
-                {orders.length > 0 && (
+                {orders.filter(o => o.status === 'new').length > 0 && (
                   <span className="bg-blue-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
-                    {orders.length}
+                    {orders.filter(o => o.status === 'new').length}
                   </span>
                 )}
               </span>
@@ -423,16 +423,17 @@ function CashierContent() {
               onTableSelect={setSelectedTableId}
             />
           ) : activeTab === 'orders' ? (
-            <div className="space-y-4">
+            <div className="space-y-6">
               {/* Clear Orders Button */}
               {orders.length > 0 && (
-                <div className="flex justify-end">
+                <div className="flex justify-between items-center">
+                  <h2 className="font-bold text-lg text-on-surface">QR Orders</h2>
                   <button
                     onClick={() => setShowClearConfirm(true)}
-                    className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+                    className="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
                   >
                     <span className="material-symbols-outlined text-sm">delete_sweep</span>
-                    Clear All Orders
+                    Clear All
                   </button>
                 </div>
               )}
@@ -445,44 +446,85 @@ function CashierContent() {
                   <p className="text-sm text-outline mt-1">Orders placed via QR codes will appear here</p>
                 </div>
               ) : (
-                orders.map(order => {
-                  const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
-                  return (
-                    <div key={order.id} className="bg-white rounded-xl p-4 border border-surface-container-low">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <h3 className="font-semibold">Order {order.id.slice(0, 8)}</h3>
-                          <p className="text-sm text-on-surface-variant">
-                            Table {table?.tableNumber || 'Unknown'} • {order.status}
-                          </p>
-                        </div>
-                        <span className="text-sm font-mono text-primary">₱{order.total.toFixed(2)}</span>
-                      </div>
-                      <div className="space-y-2 mb-3">
-                        {order.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between text-sm">
-                            <span>{item.quantity}x {item.name}</span>
-                            <span>₱{(item.price * item.quantity).toFixed(2)}</span>
+                <div className="space-y-6">
+                  {/* New Orders Section */}
+                  {orders.filter(o => o.status === 'new').length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+                        New Orders
+                      </h3>
+                      {orders.filter(o => o.status === 'new').map(order => {
+                        const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
+                        const timeString = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        return (
+                          <div key={order.id} className="bg-blue-50/50 rounded-xl p-4 border border-blue-100 shadow-sm">
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <h3 className="font-semibold text-blue-900">Order {order.id.slice(0, 8)}</h3>
+                                <p className="text-sm text-blue-700 font-medium">
+                                  Table {table?.tableNumber || 'Unknown'} • {timeString}
+                                </p>
+                              </div>
+                              <span className="text-sm font-mono text-blue-800 font-bold">₱{order.total.toFixed(2)}</span>
+                            </div>
+                            <div className="space-y-2 mb-4 bg-white/60 p-3 rounded-lg">
+                              {order.items.map((item, idx) => (
+                                <div key={idx} className="flex justify-between text-sm">
+                                  <span className="font-medium text-on-surface">{item.quantity}x {item.name}</span>
+                                  <span className="text-on-surface-variant">₱{(item.price * item.quantity).toFixed(2)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => updateOrderStatus(order.id, 'in-progress')}
+                              className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold transition-colors flex items-center justify-center gap-2 shadow-sm"
+                            >
+                              <span className="material-symbols-outlined">done_all</span>
+                              Accept Order
+                            </button>
                           </div>
-                        ))}
-                      </div>
-                      {table && table.status === 'available' && (
-                        <button
-                          onClick={() => handleTableStatusChange(table.id, 'occupied')}
-                          className="w-full py-2 px-4 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                          <span className="material-symbols-outlined">restaurant</span>
-                          Mark Table as Occupied
-                        </button>
-                      )}
-                      {table && table.status === 'occupied' && (
-                        <div className="text-center py-2 text-green-600 font-medium">
-                          Table is occupied
-                        </div>
-                      )}
+                        )
+                      })}
                     </div>
-                  )
-                })
+                  )}
+
+                  {/* Acknowledged Orders Section */}
+                  {orders.filter(o => o.status !== 'new').length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider">
+                        Acknowledged
+                      </h3>
+                      {orders.filter(o => o.status !== 'new').map(order => {
+                        const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
+                        const timeString = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        return (
+                          <div key={order.id} className="bg-white rounded-xl p-4 border border-surface-container-low opacity-80 hover:opacity-100 transition-opacity">
+                            <div className="flex items-start justify-between mb-3">
+                              <div>
+                                <h3 className="font-semibold">Order {order.id.slice(0, 8)}</h3>
+                                <p className="text-sm text-on-surface-variant">
+                                  Table {table?.tableNumber || 'Unknown'} • {timeString}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-sm font-mono text-primary block">₱{order.total.toFixed(2)}</span>
+                                <span className="text-[10px] uppercase font-bold text-green-600 tracking-wider">{order.status}</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1 mb-2">
+                              {order.items.map((item, idx) => (
+                                <div key={idx} className="flex justify-between text-xs text-on-surface-variant">
+                                  <span>{item.quantity}x {item.name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           ) : (

@@ -15,6 +15,7 @@ import {
   createTable,
   updateTableStatus,
   deleteTable,
+  updateTable,
   Order,
   MenuItem,
   Table,
@@ -268,6 +269,14 @@ export default function AdminPage() {
     const unsubTables = listenToTables(setTables)
     return () => { unsubOrders(); unsubMenu(); unsubSettings(); unsubTables() }
   }, [user])
+
+  // One-time typo fix
+  useEffect(() => {
+    const wrongTable = tables.find(t => t.name === 'Long Tablr')
+    if (wrongTable) {
+      updateTable(wrongTable.id, { name: 'Long Table' })
+    }
+  }, [tables])
 
   // ─── Computed stats ───────────────────────────────────────────────────────────
   const servedOrders = orders.filter(o => o.status === 'served')
