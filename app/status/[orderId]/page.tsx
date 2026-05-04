@@ -6,9 +6,9 @@ import Link from 'next/link'
 import { listenToOrder, Order, OrderStatus } from '@/lib/data'
 
 const STATUS_STEPS: { key: OrderStatus; label: string; icon: string; desc: string }[] = [
-  { key: 'pending_payment', label: 'Awaiting Acceptance', icon: 'schedule', desc: 'Your order is waiting for cashier acceptance.' },
+  { key: 'pending', label: 'Awaiting Acceptance', icon: 'schedule', desc: 'Your order is waiting for cashier acceptance.' },
   { key: 'accepted', label: 'Ready for Payment', icon: 'payments', desc: 'Your order has been accepted. Please complete payment.' },
-  { key: 'new', label: 'Order Received', icon: 'check_circle', desc: 'Your order has been sent to the kitchen.' },
+  { key: 'preparing', label: 'Order Received', icon: 'check_circle', desc: 'Your order has been sent to the kitchen.' },
   { key: 'in-progress', label: 'Preparing', icon: 'local_fire_department', desc: 'The kitchen is working on your meal.' },
   { key: 'ready', label: 'Ready!', icon: 'restaurant', desc: 'Your order is ready to be served.' },
   { key: 'served', label: 'Served', icon: 'done_all', desc: 'Enjoy your meal! 🎉' },
@@ -64,7 +64,7 @@ export default function StatusPage() {
               <h2 className="text-headline-md font-bold">Order #{order.id}</h2>
             </div>
             <span className={`px-3 py-1 rounded-full text-label-sm font-bold uppercase ${
-              order.status === 'pending_payment' ? 'bg-orange-100 text-orange-700' :
+              order.status === 'pending' ? 'bg-orange-100 text-orange-700' :
               order.status === 'ready' ? 'bg-green-100 text-green-700' :
               order.status === 'in-progress' ? 'bg-orange-100 text-primary' :
               order.status === 'served' ? 'bg-secondary-container text-on-secondary-container' :

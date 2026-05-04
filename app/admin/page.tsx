@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, User } from 'firebase/auth'
+import { useSession, signOut as nextAuthSignOut } from 'next-auth/react'
+import { signOut as firebaseSignOut } from 'firebase/auth'
 import { auth } from '@/lib/firebase'
 import {
   listenToOrders,
@@ -236,11 +237,8 @@ export default function AdminPage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [printTable, setPrintTable] = useState<number | null>(null)
   const [copies, setCopies] = useState(1)
-  const [user, setUser] = useState<User | null>(null)
-  const [authLoading, setAuthLoading] = useState(true)
-  const [loginEmail, setLoginEmail] = useState('')
-  const [loginPassword, setLoginPassword] = useState('')
-  const [loginError, setLoginError] = useState('')
+  // Auth — handled by NextAuth middleware; useSession gives us the user info
+  const { data: session } = useSession()
   const [mobileSidebar, setMobileSidebar] = useState(false)
   const [imageUploadStatus, setImageUploadStatus] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle')
   const [imageUploadMsg, setImageUploadMsg] = useState('')
@@ -257,18 +255,12 @@ export default function AdminPage() {
   const editingTags = (): MenuItemTag[] => (editingItem as any)?.tags ?? []
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, (u) => { setUser(u); setAuthLoading(false) })
-    return () => unsubAuth()
-  }, [])
-
-  useEffect(() => {
-    if (!user) return
     const unsubOrders = listenToOrders(setOrders)
     const unsubMenu = listenToMenu(setMenuItems)
     const unsubSettings = listenToSettings(setSettings)
     const unsubTables = listenToTables(setTables)
     return () => { unsubOrders(); unsubMenu(); unsubSettings(); unsubTables() }
-  }, [user])
+  }, [])
 
 
   // ─── Computed stats ───────────────────────────────────────────────────────────
@@ -438,11 +430,7 @@ export default function AdminPage() {
     setTableToDelete(null)
   }
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault(); setLoginError('')
-    try { await signInWithEmailAndPassword(auth, loginEmail, loginPassword) }
-    catch (err) { setLoginError((err as Error).message) }
-  }
+  // Login is now handled by /login page — middleware redirects unauthenticated users
 
   // ─── Editing helpers ──────────────────────────────────────────────────────────
   const editVariant = (i: number, field: keyof MenuItemVariant, value: string | number) => {
@@ -466,29 +454,7 @@ export default function AdminPage() {
     } as any : null)
   }
 
-  // ─── Auth loading ──────────────────────────────────────────────────────────────
-  if (authLoading) return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <span className="material-symbols-outlined animate-spin text-primary text-5xl">progress_activity</span>
-    </div>
-  )
-
-  // ─── Login ──────────────────────────────────────────────────────────────────────
-  if (!user) return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <form onSubmit={handleLogin} className="bg-white rounded-2xl shadow-xl border border-zinc-100 p-8 w-full max-w-sm space-y-5">
-        <div className="text-center mb-2">
-          <span className="material-symbols-outlined text-primary text-4xl">admin_panel_settings</span>
-          <h1 className="text-xl font-bold text-zinc-900 mt-2">Admin Login</h1>
-          <p className="text-sm text-zinc-500">Sign in to access the management portal</p>
-        </div>
-        <input type="email" placeholder="Email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} required className="w-full border border-zinc-200 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none" />
-        <input type="password" placeholder="Password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} required className="w-full border border-zinc-200 rounded-lg px-4 py-3 text-sm focus:ring-2 focus:ring-primary outline-none" />
-        {loginError && <p className="text-red-600 text-xs">{loginError}</p>}
-        <button type="submit" className="w-full bg-primary text-white py-3 rounded-lg font-bold active:scale-95 transition-transform">Sign In</button>
-      </form>
-    </div>
-  )
+  // Auth is handled by middleware — if we reach here, the user is authenticated
 
   // ─── Main UI ───────────────────────────────────────────────────────────────────
   return (
@@ -519,11 +485,20 @@ export default function AdminPage() {
           <div className="px-6 mt-auto">
             <div className="flex items-center gap-3 p-2 bg-white rounded-lg shadow-sm border border-zinc-100">
               <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold text-sm">
-                {user.email?.[0]?.toUpperCase() || 'A'}
+                {session?.user?.email?.[0]?.toUpperCase() || 'A'}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-zinc-900 truncate">{user.email}</p>
-                <button onClick={() => signOut(auth)} className="text-[10px] text-red-500 hover:text-red-700 font-medium">Sign Out</button>
+                <p className="text-xs font-bold text-zinc-900 truncate">{session?.user?.email}</p>
+                <p className="text-[9px] text-zinc-400 uppercase tracking-widest font-bold">{session?.user?.role}</p>
+                <button 
+                  onClick={async () => {
+                    try { await firebaseSignOut(auth) } catch(e){}
+                    await nextAuthSignOut({ callbackUrl: '/login' })
+                  }} 
+                  className="text-[10px] text-red-500 hover:text-red-700 font-medium"
+                >
+                  Sign Out
+                </button>
               </div>
             </div>
           </div>

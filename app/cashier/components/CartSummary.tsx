@@ -130,7 +130,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
             ...(i.variantName && { variantName: i.variantName }),
             ...(i.notes && { notes: i.notes })
           })),
-          status: 'new',
+          status: 'preparing',
           paymentStatus: 'paid',
           paymentMethod: paymentMethod === 'cash' ? 'cash' : 'card', // rough mapping for cashier
           total,
@@ -457,7 +457,7 @@ export function CartSummary({ taxRate = DEFAULT_TAX_RATE, onComplete, tables = [
                     : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100 opacity-70'
                 }`}
               >
-                <span className="font-bold text-sm">T{table.tableNumber}</span>
+                <span className="font-bold text-xs">Table {table.tableNumber}</span>
                 <span className="text-[10px] opacity-80">{table.capacity} pax</span>
               </button>
             ))}

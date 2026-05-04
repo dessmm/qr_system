@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
+import { signOut as nextAuthSignOut } from 'next-auth/react'
+import { signOut as firebaseSignOut } from 'firebase/auth'
+import { auth } from '@/lib/firebase'
 import { CartProvider, useCart, Transaction } from '@/app/cashier/context/CartContext'
 import { ProductCard } from '@/app/cashier/components/ProductCard'
 import { CartSummary } from '@/app/cashier/components/CartSummary'
@@ -50,12 +53,12 @@ function CashierContent() {
   const { addTransaction, recentTransactions, items: cartItems } = useCart()
 
   const getOrderStatusLabel = useCallback((order: Order) => {
-    if (order.status === 'new' && order.paymentStatus === 'paid') return 'Paid'
-    if (order.status === 'pending_payment') return 'Pending payment'
+    if (order.status === 'preparing' && order.paymentStatus === 'paid') return 'Paid'
+    if (order.status === 'pending') return 'Pending payment'
     if (order.status === 'in-progress') return 'In progress'
     if (order.status === 'ready') return 'Ready'
     if (order.status === 'served') return 'Served'
-    return 'New'
+    return 'Preparing'
   }, [])
 
   useEffect(() => {
@@ -93,6 +96,12 @@ function CashierContent() {
         : t
     )
   }, [tables, optimisticStatuses])
+
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60000)
+    return () => clearInterval(timer)
+  }, [])
 
   const selectedTable = useMemo<Table | null>(
     () => tablesWithOptimistic.find(t => t.id === selectedTableId) ?? null,
@@ -159,7 +168,7 @@ function CashierContent() {
   const getStatusColor = (status: TableStatus) => {
     switch (status) {
       case 'available': return 'bg-green-100 text-green-700 border-green-200'
-      case 'occupied':  return 'bg-amber-100 text-amber-700 border-amber-200'
+      case 'occupied':  return 'bg-red-100 text-red-700 border-red-200'
       case 'reserved':  return 'bg-blue-100 text-blue-700 border-blue-200'
     }
   }
@@ -239,6 +248,19 @@ function CashierContent() {
               aria-label="Settings"
             >
               <span className="material-symbols-outlined text-on-surface-variant">settings</span>
+            </button>
+
+            {/* 🚪 Sign Out */}
+            <button
+              onClick={async () => {
+                try { await firebaseSignOut(auth) } catch(e){}
+                await nextAuthSignOut({ callbackUrl: '/login' })
+              }}
+              className="p-2 hover:bg-red-50 rounded-xl transition-colors group"
+              aria-label="Sign Out"
+              title="Sign Out"
+            >
+              <span className="material-symbols-outlined text-on-surface-variant group-hover:text-red-500 transition-colors">logout</span>
             </button>
           </div>
         </div>
@@ -380,9 +402,9 @@ function CashierContent() {
               <span className="flex items-center justify-center gap-2">
                 <span className="material-symbols-outlined">qr_code</span>
                 QR Orders
-                {orders.filter(o => (o.status === 'new' || o.status === 'accepted') && o.paymentStatus !== 'paid').length > 0 && (
+                {orders.filter(o => (o.status === 'preparing' || o.status === 'accepted') && o.paymentStatus !== 'paid').length > 0 && (
                   <span className="bg-blue-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
-                    {orders.filter(o => (o.status === 'new' || o.status === 'accepted') && o.paymentStatus !== 'paid').length}
+                    {orders.filter(o => (o.status === 'preparing' || o.status === 'accepted') && o.paymentStatus !== 'paid').length}
                   </span>
                 )}
               </span>
@@ -444,13 +466,13 @@ function CashierContent() {
               ) : (
                 <div className="space-y-6">
                   {/* Awaiting Acceptance Section */}
-                  {orders.filter(o => o.status === 'pending_payment').length > 0 && (
+                  {orders.filter(o => o.status === 'pending').length > 0 && (
                     <div className="space-y-3">
                       <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
                         Awaiting Acceptance
                       </h3>
-                      {orders.filter(o => o.status === 'pending_payment').map(order => {
+                      {orders.filter(o => o.status === 'pending').map(order => {
                         const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
                         const timeString = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                         return (
@@ -538,12 +560,12 @@ function CashierContent() {
                   )}
 
                   {/* Acknowledged Orders Section */}
-                  {orders.filter(o => (o.status === 'new' && o.paymentStatus === 'paid') || (o.status !== 'new' && o.status !== 'pending_payment')).length > 0 && (
+                  {orders.filter(o => o.status !== 'pending' && o.status !== 'accepted').length > 0 && (
                     <div className="space-y-3">
                       <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-wider">
                         Acknowledged
                       </h3>
-                      {orders.filter(o => (o.status === 'new' && o.paymentStatus === 'paid') || (o.status !== 'new' && o.status !== 'pending_payment')).map(order => {
+                      {orders.filter(o => o.status !== 'pending' && o.status !== 'accepted').map(order => {
                         const table = tablesWithOptimistic.find(t => t.tableNumber === order.tableNumber)
                         const timeString = new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                         return (
@@ -619,12 +641,21 @@ function CashierContent() {
                         </span>
                       </span>
                     </div>
+                    {table.status === 'occupied' && table.occupiedAt && (
+                      <div className="mt-2 flex items-center gap-1 text-[10px] text-red-600 font-medium">
+                        <span className="material-symbols-outlined text-xs">timer</span>
+                        {(() => {
+                          const mins = Math.floor((now - table.occupiedAt) / 60000)
+                          return mins > 0 ? `${mins}m ago` : 'Just joined'
+                        })()}
+                      </div>
+                    )}
                     {/* FIX 6: Guard currentOrderId before rendering */}
                     {table.currentOrderId && (
                       <div className="mt-2 pt-2 border-t border-outline-variant">
                         <p className="text-xs text-on-surface-variant truncate">
                           Order:{' '}
-                          <span className="font-mono text-primary">
+                          <span className="font-mono text-primary font-bold">
                             {table.currentOrderId.slice(0, 8)}
                           </span>
                         </p>
@@ -708,11 +739,15 @@ function CashierContent() {
                     {selectedTable.status === 'occupied' && (
                       <>
                         <button
-                          onClick={() => handleTableStatusChange(selectedTable.id, 'available')}
+                          onClick={() => {
+                            if (confirm(`Are you sure you want to mark Table ${selectedTable.tableNumber} as available?`)) {
+                              handleTableStatusChange(selectedTable.id, 'available')
+                            }
+                          }}
                           className="w-full py-2 px-4 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
                         >
                           <span className="material-symbols-outlined">check_circle</span>
-                          Clear Table (Payment Done)
+                          Free Table (Manual)
                         </button>
                         <button
                           onClick={() => handleTableStatusChange(selectedTable.id, 'reserved')}

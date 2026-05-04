@@ -73,7 +73,7 @@ export function NotificationsPanel({ open, onClose, onUnreadChange }: Notificati
         const newKey  = `${o.id}:new`
         const readyKey = `${o.id}:ready`
         // New order placed
-        if (o.status === 'new' && !seenOrders.current.has(newKey)) {
+        if (o.status === 'preparing' && !seenOrders.current.has(newKey)) {
           seenOrders.current.add(newKey)
           push({
             type: 'new_order',

@@ -12,13 +12,33 @@ import {
   deleteDoc,
   writeBatch
 } from 'firebase/firestore';
-import { db } from './firebase';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { db, auth } from './firebase';
+
+export const ensureAuth = async () => {
+  return new Promise((resolve, reject) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      unsubscribe() // prevent multiple calls
+      if (user) {
+        resolve(user)
+      } else {
+        try {
+          const result = await signInAnonymously(auth)
+          resolve(result.user)
+        } catch (error) {
+          console.error("Anonymous auth failed:", error)
+          reject(error)
+        }
+      }
+    })
+  })
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type OrderStatus = 'pending_payment' | 'accepted' | 'new' | 'in-progress' | 'ready' | 'served'
+export type OrderStatus = 'pending' | 'accepted' | 'preparing' | 'in-progress' | 'ready' | 'served'
 
 export interface AppSettings {
   [key: string]: string | undefined;
@@ -66,7 +86,8 @@ export interface Table {
   positionX: number
   positionY: number
   shape?: 'square' | 'round'
-  currentOrderId?: string
+  currentOrderId?: string | null
+  occupiedAt?: number | null
   createdAt: number
   updatedAt: number
 }
@@ -96,12 +117,14 @@ export async function createTable(table: Omit<Table, 'id' | 'createdAt' | 'updat
   }
 }
 
-export async function updateTableStatus(tableId: string, status: TableStatus, orderId?: string) {
+export async function updateTableStatus(tableId: string, status: TableStatus, orderId?: string | null) {
   try {
+    const now = Date.now()
     await updateDoc(doc(db, TABLES_COL, tableId), {
       status,
       currentOrderId: orderId ?? null,
-      updatedAt: Date.now()
+      occupiedAt: status === 'occupied' ? now : null,
+      updatedAt: now
     })
   } catch (error) {
     console.error('Error updating table status:', error)
@@ -161,6 +184,7 @@ export async function clearTableAfterPayment(tableId: string) {
     await updateDoc(doc(db, TABLES_COL, tableId), {
       status: 'available',
       currentOrderId: null,
+      occupiedAt: null,
       updatedAt: Date.now()
     })
     console.log('[clearTableAfterPayment] table freed:', tableId)
@@ -311,6 +335,9 @@ export async function addOrder(
   options?: { preserveStatus?: boolean }
 ): Promise<string | null> {
   try {
+    // Ensure the client SDK is authenticated (anonymously for customers) before writing
+    await ensureAuth();
+
     const now = Date.now()
     const batch = writeBatch(db)
 
@@ -318,7 +345,7 @@ export async function addOrder(
     const orderRef = doc(collection(db, ORDERS_COL))
     batch.set(orderRef, {
       ...order,
-      status: options?.preserveStatus ? (order.status ?? 'pending_payment') : 'pending_payment',
+      status: options?.preserveStatus ? (order.status ?? 'pending') : 'pending',
       paymentStatus: options?.preserveStatus ? (order.paymentStatus ?? 'pending') : 'pending',
       createdAt: now,
       updatedAt: now,
@@ -396,10 +423,8 @@ export async function markOrderServed(orderId: string): Promise<void> {
     })
     
     if (tableDoc) {
-      batch.update(doc(db, TABLES_COL, tableDoc.id), {
-        status: 'occupied',
-        updatedAt: Date.now()
-      })
+      // Logic removed: Table status is now controlled by QR scan (Occupied) 
+      // and Payment (Available). markOrderServed no longer changes table status.
     }
     
     await batch.commit()
@@ -425,6 +450,9 @@ export async function processPaymentAndActivateOrder(
   tableId?: string
 ): Promise<void> {
   try {
+    // Ensure the client SDK is authenticated (anonymously for customers) before writing
+    await ensureAuth();
+
     const now = Date.now()
     const batch = writeBatch(db)
 
@@ -435,15 +463,16 @@ export async function processPaymentAndActivateOrder(
       tipAmount,
       grandTotal,
       paidAt: now,
-      status: 'new',
+      status: 'preparing',
       updatedAt: now,
     })
 
-    // Mark table occupied
+    // Mark table available (since order is paid and sent to kitchen)
     if (tableId) {
       batch.update(doc(db, TABLES_COL, tableId), {
-        status: 'occupied',
-        currentOrderId: orderId,
+        status: 'available',
+        currentOrderId: null,
+        occupiedAt: null,
         updatedAt: now,
       })
     }

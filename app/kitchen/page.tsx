@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { db } from '@/lib/firebase'
+import { useSession, signOut as nextAuthSignOut } from 'next-auth/react'
+import { signOut as firebaseSignOut } from 'firebase/auth'
+import { db, auth } from '@/lib/firebase'
 import {
   collection, query, where, orderBy, limit,
   getDocs, startAfter, onSnapshot, QueryDocumentSnapshot
@@ -33,27 +35,27 @@ const LIVE_PAGE_SIZE = 9
 const HISTORY_PAGE_SIZE = 20
 
 const STATUS_COLORS: Record<OrderStatus, string> = {
-  'pending_payment': 'border-slate-200',
+  'pending': 'border-slate-200',
   'accepted': 'border-slate-200',
-  'new': 'border-slate-200',
+  'preparing': 'border-slate-200',
   'in-progress': 'border-blue-400',
   'ready': 'border-green-400',
   'served': 'border-slate-200 opacity-60',
 }
 
 const STATUS_HEADER: Record<OrderStatus, string> = {
-  'pending_payment': 'bg-slate-50',
+  'pending': 'bg-slate-50',
   'accepted': 'bg-slate-50',
-  'new': 'bg-slate-50',
+  'preparing': 'bg-slate-50',
   'in-progress': 'bg-blue-50',
   'ready': 'bg-green-50',
   'served': 'bg-slate-50',
 }
 
 const STATUS_BG: Record<OrderStatus, string> = {
-  'pending_payment': 'bg-white',
+  'pending': 'bg-white',
   'accepted': 'bg-white',
-  'new': 'bg-white',
+  'preparing': 'bg-white',
   'in-progress': 'bg-[#eff6ff]',
   'ready': 'bg-[#f0fdf4]',
   'served': 'bg-white',
@@ -248,6 +250,31 @@ function useNow(intervalMs = 1000) {
   return now
 }
 
+// ─── Kitchen user info with sign-out ──────────────────────────────────────
+function KitchenUserInfo() {
+  const { data: session } = useSession()
+  return (
+    <div className="flex items-center gap-3 p-3 bg-slate-200/50 rounded-xl">
+      <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold">
+        {session?.user?.name?.[0]?.toUpperCase() || session?.user?.email?.[0]?.toUpperCase() || 'K'}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-slate-900 truncate">{session?.user?.name || session?.user?.email || 'Kitchen'}</p>
+        <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">{session?.user?.role || 'Staff'}</p>
+        <button
+          onClick={async () => {
+            try { await firebaseSignOut(auth) } catch(e){}
+            await nextAuthSignOut({ callbackUrl: '/login' })
+          }}
+          className="text-[10px] text-red-500 hover:text-red-700 font-medium"
+        >
+          Sign Out
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function KitchenPage() {
   const now = useNow(1000)
   const [orders, setOrders] = useState<Order[]>([])
@@ -318,7 +345,7 @@ export default function KitchenPage() {
 
   // --- Computed Orders --------------------------------------------------------
   const liveOrders = useMemo(() => {
-    let filtered = orders.filter(o => o.status !== 'served' && o.status !== 'pending_payment')
+    let filtered = orders.filter(o => o.status !== 'served' && o.status !== 'pending' && o.status !== 'accepted')
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
@@ -382,7 +409,7 @@ export default function KitchenPage() {
 
   useEffect(() => {
     const currentIds = new Set(orders.filter(o => o.status !== 'served').map(o => o.id))
-    const newIds = orders.filter(o => o.status === 'new' && !prevLiveIdsRef.current.has(o.id) && prevLiveIdsRef.current.size > 0)
+    const newIds = orders.filter(o => o.status === 'preparing' && !prevLiveIdsRef.current.has(o.id) && prevLiveIdsRef.current.size > 0)
 
     if (newIds.length > 0) {
       new Audio('/chime.mp3').play().catch(() => { })
@@ -512,9 +539,9 @@ export default function KitchenPage() {
 
   const advance = useCallback(async (order: Order) => {
     const nextMap: Record<OrderStatus, OrderStatus> = {
-      'pending_payment': 'new',
-      'accepted': 'new',
-      'new': 'in-progress',
+      'pending': 'preparing',
+      'accepted': 'preparing',
+      'preparing': 'in-progress',
       'in-progress': 'ready',
       'ready': 'served',
       'served': 'served',
@@ -522,10 +549,10 @@ export default function KitchenPage() {
     const nextStatus = nextMap[order.status]
     const prevStatus = order.status
     const statusLabels: Record<OrderStatus, string> = {
-      'pending_payment': 'Pending',
+      'pending': 'Pending',
       'accepted': 'Accepted',
-      'new': 'New',
-      'in-progress': 'Prep',
+      'preparing': 'Preparing',
+      'in-progress': 'In-Progress',
       'ready': 'Ready',
       'served': 'Served',
     }
@@ -607,15 +634,7 @@ export default function KitchenPage() {
             ))}
           </nav>
           <div className="px-6 mt-auto">
-            <div className="flex items-center gap-3 p-3 bg-slate-200/50 rounded-xl">
-              <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold">
-                CM
-              </div>
-              <div>
-                <p className="font-bold text-slate-900">Chef Marco</p>
-                <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Head Chef</p>
-              </div>
-            </div>
+            <KitchenUserInfo />
           </div>
         </aside>
 
@@ -688,13 +707,13 @@ export default function KitchenPage() {
 
                 <div className="flex items-center gap-1">
                   <span className="text-[10px] text-slate-400 uppercase font-bold mr-1">Status</span>
-                  {(['all', 'new', 'in-progress', 'ready'] as const).map(s => (
+                  {(['all', 'preparing', 'in-progress', 'ready'] as const).map(s => (
                     <button
                       key={s}
                       onClick={() => setSelectedStatus(s)}
                       className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide transition-all ${selectedStatus === s
                           ? s === 'all' ? 'bg-slate-800 text-white'
-                            : s === 'new' ? 'bg-orange-500 text-white'
+                            : s === 'preparing' ? 'bg-orange-500 text-white'
                               : s === 'in-progress' ? 'bg-blue-600 text-white'
                                 : 'bg-green-600 text-white'
                           : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
@@ -792,7 +811,23 @@ export default function KitchenPage() {
                           <div className={`p-3 border-b border-slate-100 flex justify-between items-start ${headerBg}`}>
                             <div>
                               <div className="flex items-center gap-1.5">
-                                <p className="text-lg font-bold text-slate-900 leading-none">T{order.tableNumber}</p>
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-lg font-bold text-slate-900 leading-none">Table {order.tableNumber}</p>
+                                  {(() => {
+                                    const table = tables.find(t => t.tableNumber === order.tableNumber)
+                                    if (!table) return null
+                                    return (
+                                      <div 
+                                        className={`w-2.5 h-2.5 rounded-full border border-white shadow-sm ${
+                                          table.status === 'available' ? 'bg-emerald-500' : 
+                                          table.status === 'occupied' ? 'bg-red-500 animate-pulse' : 
+                                          'bg-blue-500'
+                                        }`}
+                                        title={`Table ${table.status}`}
+                                      />
+                                    )
+                                  })()}
+                                </div>
                                 {isInProg && (
                                   <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[9px] font-bold rounded uppercase tracking-wide">
                                     👨‍🍳 Prep
@@ -872,19 +907,39 @@ export default function KitchenPage() {
 
                           <div className={`p-2 border-t border-slate-100 ${isInProg ? 'bg-blue-50' : isReady ? 'bg-green-50' : 'bg-slate-50'
                             }`}>
-                            {order.status === 'new' && (
-                              <button
-                                onClick={() => advance(order)}
-                                className="w-full py-2 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded uppercase tracking-wider text-xs active:scale-95 transition-all"
-                              >
-                                Start Cooking
-                              </button>
+                            {(order.status === 'preparing' || (order.status as any) === 'new') && (
+                              <div className="flex gap-1.5">
+                                <button
+                                  onClick={() => advance(order)}
+                                  className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded uppercase tracking-wider text-[10px] active:scale-95 transition-all"
+                                >
+                                  Start Cooking
+                                </button>
+                                {isUrgent && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        await updateOrderStatus(order.id, 'ready')
+                                        addToast(`Table ${order.tableNumber} → Ready (Rushed)`)
+                                      } catch (err) {
+                                        console.error('Rush failed:', err)
+                                      }
+                                    }}
+                                    className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded uppercase tracking-wider text-[10px] active:scale-95 transition-all flex items-center justify-center gap-1"
+                                    title="Rush to Ready"
+                                  >
+                                    <span className="material-symbols-outlined text-[14px]">flash_on</span>
+                                    Ready
+                                  </button>
+                                )}
+                              </div>
                             )}
                             {order.status === 'in-progress' && (
                               <button
                                 onClick={() => advance(order)}
-                                className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded uppercase tracking-wider text-xs active:scale-95 transition-all"
+                                className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded uppercase tracking-wider text-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
                               >
+                                {isUrgent && <span className="material-symbols-outlined text-[14px]">priority_high</span>}
                                 Mark Ready
                               </button>
                             )}
@@ -1077,12 +1132,20 @@ export default function KitchenPage() {
                           <h3 className="font-bold text-slate-900">Table {table.tableNumber}</h3>
                           <p className="text-xs text-slate-500">{table.name}</p>
                         </div>
-                        <div className={`px-2 py-1 rounded-full text-xs font-bold ${
-                          table.status === 'available' ? 'bg-emerald-100 text-emerald-700' :
-                          table.status === 'occupied'  ? 'bg-red-100 text-red-700' :
-                          'bg-blue-100 text-blue-700'
-                        }`}>
-                          {table.status.toUpperCase()}
+                        <div className="flex flex-col items-end">
+                          <div className={`px-2 py-1 rounded-full text-[10px] font-black tracking-wider ${
+                            table.status === 'available' ? 'bg-emerald-100 text-emerald-700' :
+                            table.status === 'occupied'  ? 'bg-red-100 text-red-700' :
+                            'bg-blue-100 text-blue-700'
+                          }`}>
+                            {table.status.toUpperCase()}
+                          </div>
+                          {table.status === 'occupied' && table.occupiedAt && (
+                            <span className="text-[10px] text-red-500 font-bold mt-1 flex items-center gap-0.5">
+                              <span className="material-symbols-outlined text-[12px]">timer</span>
+                              {Math.floor((now - table.occupiedAt) / 60000)}m
+                            </span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3 text-xs text-slate-600">

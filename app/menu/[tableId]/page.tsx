@@ -164,7 +164,15 @@ export default function MenuPage() {
 
   useEffect(() => {
     const unsub = listenToTables(tables => {
-      setTable(tables.find(t => t.tableNumber === tableNumber) ?? null)
+      const found = tables.find(t => t.tableNumber === tableNumber)
+      setTable(found ?? null)
+      
+      // Auto-occupy if available
+      if (found && found.status === 'available') {
+        import('@/lib/data').then(({ updateTableStatus }) => {
+          updateTableStatus(found.id, 'occupied')
+        })
+      }
     })
     return () => unsub()
   }, [tableNumber])
@@ -209,7 +217,7 @@ export default function MenuPage() {
     return cart.find(c => c.id === cartItemId)?.quantity || 0
   }
 
-  // ─── Place order (creates pending_payment order → redirects to checkout) ──
+  // ─── Place order (creates pending order → redirects to checkout) ──
   const placeOrder = async () => {
     if (cart.length === 0) return
     setIsPlacing(true)
@@ -226,7 +234,7 @@ export default function MenuPage() {
         {
           tableNumber,
           items: orderItems,
-          status: 'new',           // addOrder overrides this to 'pending_payment'
+          status: 'preparing',           // addOrder overrides this to 'pending'
           paymentStatus: 'pending',
           specialInstructions,
           createdAt: Date.now(),
@@ -247,7 +255,7 @@ export default function MenuPage() {
         setCart([])
         setSpecialInstructions('')
         setShowConfirm(false)
-        router.push(`/checkout/${orderId}`)
+        router.push(`/status/${orderId}`)
       } else {
         setIsPlacing(false)
         setOrderError('Failed to place order. Please try again.')
